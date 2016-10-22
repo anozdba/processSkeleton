@@ -2,7 +2,7 @@
 # --------------------------------------------------------------------
 # processSkeleton.pm
 #
-# $Id: processSkeleton.pm,v 1.53 2016/07/06 23:40:02 db2admin Exp db2admin $
+# $Id: processSkeleton.pm,v 1.55 2016/07/14 04:01:03 db2admin Exp db2admin $
 #
 # Description:
 # Script to process a skeleton
@@ -31,6 +31,10 @@
 # ChangeLog:
 #
 # $Log: processSkeleton.pm,v $
+# Revision 1.55  2016/07/14 04:01:03  db2admin
+# centralise SQL loads so that common processing can be done
+# When loading SQL dont load lines that are prefixed with -- (comments)
+#
 # Revision 1.53  2016/07/06 23:40:02  db2admin
 # add in new control cards )TRUNCZEROES and )LEAVEZEROES to control processing of trailing zeroes
 # on numeric fields (only affects numbers with a decimal point)
@@ -504,7 +508,7 @@ sub skelVersion {
   # -----------------------------------------------------------
 
   my $currentSubroutine = 'skelVersion'; 
-  my $ID = '$Id: processSkeleton.pm,v 1.53 2016/07/06 23:40:02 db2admin Exp db2admin $';
+  my $ID = '$Id: processSkeleton.pm,v 1.55 2016/07/14 04:01:03 db2admin Exp db2admin $';
   my @V = split(/ /,$ID);
   my $nameStr=$V[1];
   my @N = split(",",$nameStr);
@@ -979,6 +983,40 @@ sub displayError {
     print STDERR "$sub - $tDate $tTime - $currentActiveSkel($tmpLine) : ERROR : $lit\n";
   }
 } # end of displayError
+
+sub loadSQL {
+  # -----------------------------------------------------------
+  # this routine will load SQL from a file
+  #
+  # usage: loadSQL(<file name>,<calling routine>);
+  # returns: the SQL string
+  # -----------------------------------------------------------
+  
+  my $fileName = shift;
+  my $callingRoutine = shift;
+  
+  displayDebug("[loadSQL] SQL file is: $fileName",2,$callingRoutine);
+
+  my $SQL = "";
+  if ( open ( my $tmpIn, "<", "$fileName" ) ) {
+    while ( <$tmpIn> ) {
+      if ( $_ =~ /^--/) { # comment so ignore
+      }
+      else {
+        $SQL .= " $_";
+      }
+    }
+    close $tmpIn;
+  }
+  else { # couldn't open the file
+    outputLine("Unable to open $fileName");
+  }
+  $SQL = substituteVariables($SQL);                      # Substitute variables as necessary
+  displayDebug("[loadSQL] Content of file is: $SQL",2,$callingRoutine);
+  
+  return $SQL;
+
+} # end of loadSQL
 
 sub loadSkel {
   # -----------------------------------------------------------
@@ -2760,19 +2798,7 @@ sub processDMP {
     if ( $skelDOTSkipCards eq "No" ) {                         # Not within a )DOT being skipped
 
       if ( uc($SQL) =~ "^FILE\:|^SQL\:" ) {                    # does the sql start with either SQL: or FILE:
-        $TMP_File = trim(substr($SQL,$+[0]));                     # the file name starts at the character after the literal
-        if ( open ( my $tmpIn, "<", "$TMP_File" ) ) {
-          $SQL = "";
-          while ( <$tmpIn> ) {
-            $SQL .= " $_";
-          }
-          close $tmpIn;
-        }
-        else { # couldn't open the file
-          outputLine("Unable to open $TMP_File");
-          $SQL = "";
-        }
-        displayDebug("Select from file is: $SQL",2,$currentSubroutine);
+        $SQL = loadSQL(trim(substr($SQL,$+[0])) , $currentSubroutine);             # load the SQL
       }
 
       $cursorSQL{'DMP'} = $SQL;                                # set up the SQL
@@ -3019,21 +3045,7 @@ sub processGRAPH {
       # process the supplied SQL
   
       if ( uc($SQL) =~ "^FILE\:|^SQL\:" ) {                    # does the sql start with either SQL: or FILE:
-        my $TMP_File = trim(substr($SQL,$+[0]));                     # the file name starts at the character after the literal
-        my $tmpIn;
-        if ( open ( my $tmpIn, "<", "$TMP_File" ) ) {
-          $SQL = "";
-          while ( <$tmpIn> ) {
-            $SQL .= " $_";
-          }
-          close $tmpIn;
-        }
-        else { # couldn't open the file
-          outputLine("Unable to open $TMP_File");
-          $SQL = "";
-        }
-        $SQL = substituteVariables($SQL);                      # Substitute variables as necessary
-        displayDebug("Select from file is: $SQL",2,$currentSubroutine);
+        $SQL = loadSQL(trim(substr($SQL,$+[0])) , $currentSubroutine);             # load the SQL
       }
       
       # all the parameters have now been processed
@@ -3427,7 +3439,7 @@ sub processCTAB {
   # -----------------------------------------------------------  
   
   my $currentSubroutine = 'processCTAB';
-  my $num_of_fields = 0;                                       # filed containgin the number of columns returned
+  my $num_of_fields = 0;                                       # field containgin the number of columns returned
   my $tStr = "";                                               # this string will hold the generated output line
   my $skelTabValue = '';                                       # value of the column
 
@@ -3449,29 +3461,12 @@ sub processCTAB {
   
   if ( $skelSelSkipCards eq "No" ) {                           # not skipping cards because of a failed )SEL
     if ( $skelDOTSkipCards eq "No" ) {                         # Not within a )DOT being skipped
-      
-      if ( uc($SQL) =~ "^FILE\:|^SQL\:" ) {                    # does the sql start with either SQL: or FILE:
-        $TMP_File = trim(substr($SQL,$+[0]));                     # the file name starts at the character after the literal
-        if ( open ( my $tmpIn, "<", "$TMP_File" ) ) {
-          $SQL = "";
-          while ( <$tmpIn> ) {
-            $SQL .= " $_";
-          }
-          close $tmpIn;
-        }
-        else { # couldn't open the file
-          outputLine("Unable to open $TMP_File");
-          $SQL = "";
-        }
-        $SQL = substituteVariables($SQL);                      # Substitute variables as necessary
-        displayDebug("Select from file is: $SQL",2,$currentSubroutine);
-      }
             
       if ( substr($SQL,0,1) eq '(' ) {
         ($parms, $newSQL) = ($SQL =~ /\((.*?)\)(.*)/);
         $SQL = trim($newSQL);
         $parms = trim($parms);
-        if ( $parms =~ /,/ ) { # if the parm contains a comma then it includes multiple parameters. A # parameter ends the striong of checkbox names
+        if ( $parms =~ /,/ ) { # if the parm contains a comma then it includes multiple parameters. A # parameter ends the string of checkbox names
           my @tmpParm = split(',',$parms);
           @checkBox_names = ();  # array of checkbox names
           @checkBox_labels = ();  # array of checkbox labels
@@ -3496,7 +3491,11 @@ sub processCTAB {
         }
         displayDebug("Extracted button name is: $buttonName, form is: $form, SQL is: $SQL",1,$currentSubroutine);
       }
-      
+            
+      if ( uc($SQL) =~ "^FILE\:|^SQL\:" ) {                    # does the sql start with either SQL: or FILE:
+        $SQL = loadSQL(trim(substr($SQL,$+[0])) , $currentSubroutine);             # load the SQL
+      }
+
       if ( ! $checkAllWritten ) { # if we haven';t written out the check all javascript function then do it now
         outputLineNT('<script type="text/javascript">');
         outputLineNT('function SetAllCheckBoxes(FormName, FieldName, CheckValue)');
@@ -3774,23 +3773,6 @@ sub processSBOX {
   if ( $skelSelSkipCards eq "No" ) {                           # not skipping cards because of a failed )SEL
     if ( $skelDOTSkipCards eq "No" ) {                         # Not within a )DOT being skipped
       
-      if ( uc($SQL) =~ "^FILE\:|^SQL\:" ) {                    # does the sql start with either SQL: or FILE:
-        $TMP_File = trim(substr($SQL,$+[0]));                     # the file name starts at the character after the literal
-        if ( open ( my $tmpIn, "<", "$TMP_File" ) ) {
-          $SQL = "";
-          while ( <$tmpIn> ) {
-            $SQL .= " $_";
-          }
-          close $tmpIn;
-        }
-        else { # couldn't open the file
-          outputLine("Unable to open $TMP_File");
-          $SQL = "";
-        }
-        $SQL = substituteVariables($SQL);                      # Substitute variables as necessary
-        displayDebug("Select from file is: $SQL",2,$currentSubroutine);
-      }
-            
       if ( substr($SQL,0,1) eq '(' ) {
         ($parms, $newSQL) = ($SQL =~ /\((.*?)\)(.*)/);
         $SQL = trim($newSQL);
@@ -3805,6 +3787,10 @@ sub processSBOX {
           if ( defined($tmpParm[5]) ) { $form_method = $tmpParm[5]; }       # method to use on form
         }
         displayDebug("Extracted ID is: $ID, button name is: $buttonName, form is: $formName, SQL is: $SQL",1,$currentSubroutine);
+      }
+
+      if ( uc($SQL) =~ "^FILE\:|^SQL\:" ) {                    # does the sql start with either SQL: or FILE:
+        $SQL = loadSQL(trim(substr($SQL,$+[0])) , $currentSubroutine);             # load the SQL
       }
 
       if ( trim($SQL) ne '' ) { # if some SQL was supplied then ......
@@ -3830,6 +3816,7 @@ sub processSBOX {
               if ( $form_components =~ /S/ ) { # put in the form start
                 outputLine("<form name=\"$formName\" action=\"$form_target\" method=\"$form_method\" accept-charset=\"UTF-8\" autocomplete=\"off\" novalidate>");
               }
+            
               outputLine("<select id=\"$ID\" name=\"$formName\" border=\"1\">");
           
               # write out the data .....
@@ -4039,20 +4026,7 @@ sub processFTAB {
     if ( $skelDOTSkipCards eq "No" ) {                         # Not within a )DOT being skipped
       
       if ( uc($SQL) =~ "^FILE\:|^SQL\:" ) {                    # does the sql start with either SQL: or FILE:
-        $TMP_File = trim(substr($SQL,$+[0]));                     # the file name starts at the character after the literal
-        if ( open (my $tmpIn, "<", "$TMP_File" ) ) {
-          $SQL = "";
-          while ( <$tmpIn> ) {
-            $SQL .= " $_";
-          }
-          close $tmpIn;
-        }
-        else { # couldn't open the file
-          outputLine("Unable to open $TMP_File");
-          $SQL = "";
-        }
-        $SQL = substituteVariables($SQL);                      # Substitute variables as necessary
-        displayDebug("Select from file is: $SQL",2,$currentSubroutine);
+        $SQL = loadSQL(trim(substr($SQL,$+[0])) , $currentSubroutine);             # load the SQL
       }
       
       $cursorSQL{'FTAB'} = $SQL;                               # set up the SQL
@@ -4252,20 +4226,7 @@ sub processFXTAB {
       # load up the SQL if it is in a file
       
       if ( uc($SQL) =~ "^FILE\:|^SQL\:" ) {                    # does the sql start with either SQL: or FILE:
-        $TMP_File = trim(substr($SQL,$+[0]));                     # the file name starts at the character after the literal
-        if ( open (my $tmpIn, "<", "$TMP_File" ) ) {
-          $SQL = "";
-          while ( <$tmpIn> ) {
-            $SQL .= " $_";
-          }
-          close $tmpIn;
-        }
-        else { # couldn't open the file
-          outputLine("Unable to open $TMP_File");
-          $SQL = "";
-        }
-        $SQL = substituteVariables($SQL);                      # Substitute variables as necessary
-        displayDebug("Select from file is: $SQL",2,$currentSubroutine);
+        $SQL = loadSQL(trim(substr($SQL,$+[0])) , $currentSubroutine);             # load the SQL
       }
       
       $cursorSQL{'FXTAB'} = $SQL;                               # set up the SQL
@@ -4486,20 +4447,7 @@ sub processDOCMD {
       setVariable('rowsAffected',0);                           # reset the internal variable
       
       if ( uc($SQL) =~ "^FILE\:|^SQL\:" ) {                    # does the sql start with either SQL: or FILE:
-        $TMP_File = trim(substr($SQL,$+[0]));                     # the file name starts at the character after the literal
-        if ( open (my $tmpIn, "<", "$TMP_File" ) ) {
-          $SQL = "";
-          while ( <$tmpIn> ) {
-            $SQL .= " $_";
-          }
-          close $tmpIn;
-        }
-        else { # couldn't open the file
-          outputLine("Unable to open $TMP_File");
-          $SQL = "";
-        }
-        $SQL = substituteVariables($SQL);                      # Substitute variables as necessary
-        displayDebug("Select from file is: $SQL",2,$currentSubroutine);
+        $SQL = loadSQL(trim(substr($SQL,$+[0])) , $currentSubroutine);             # load the SQL
       }
       
       # check to see if an action type has been set .....
@@ -4572,20 +4520,7 @@ sub processFVTAB {
     if ( $skelDOTSkipCards eq "No" ) {                         # Not within a )DOT being skipped
       
       if ( uc($SQL) =~ "^FILE\:|^SQL\:" ) {                    # does the sql start with either SQL: or FILE:
-        $TMP_File = trim(substr($SQL,$+[0]));                     # the file name starts at the character after the literal
-        if ( open (my $tmpIn, "<", "$TMP_File" ) ) {
-          $SQL = "";
-          while ( <$tmpIn> ) {
-            $SQL .= " $_";
-          }
-          close $tmpIn;
-        }
-        else { # couldn't open the file
-          outputLine("Unable to open $TMP_File");
-          $SQL = "";
-        }
-        $SQL = substituteVariables($SQL);                      # Substitute variables as necessary
-        displayDebug("Select from file is: $SQL",2,$currentSubroutine);
+        $SQL = loadSQL(trim(substr($SQL,$+[0])) , $currentSubroutine);             # load the SQL
       }
       
       $cursorSQL{'FVTAB'} = $SQL;                               # set up the SQL
@@ -4711,18 +4646,7 @@ sub processDOT {
 
   if ( $where ne '' ) {                        # only bother if there is a where clause
     if ( uc($where) =~ "^FILE\:|^SQL\:" ) {                    # does the sql start with either SQL: or FILE:
-      my $TMP_File = trim(substr($where,$+));                     # the file name starts at the character after the literal
-      if ( open ( my $tmpIn, "<", "$TMP_File" ) ) { # file opened ok
-        $where = "";
-        while ( <$tmpIn> ) {
-          $where .= " $_";
-        }
-        close $tmpIn;
-      }
-      else { # couldn't open the file
-        displayError("Unable to open $TMP_File",$currentSubroutine);
-        $where = '';                     # blank out the where clause
-      }
+      $where = loadSQL(trim(substr($where,$+[0])) , $currentSubroutine);             # load the SQL
     }
   }
 
@@ -4761,19 +4685,7 @@ sub processXDOT {
   # read in data if it is held in a file
 
   if ( uc($SQL) =~ "^FILE\:|^SQL\:" ) {                    # does the sql start with either SQL: or FILE:
-    my $TMP_File = trim(substr($SQL,$+[0]));                     # the file name starts at the character after the literal
-    if ( open (my $tmpIn, "<", "$TMP_File" ) ) { # file opened ok
-      $SQL = "";
-      while ( <$tmpIn> ) {
-        $SQL .= " $_";
-      }
-      close $tmpIn;
-    }
-    else { # couldn't open the file
-      displayError("Unable to open $TMP_File",$currentSubroutine);
-      $SQL = '';                     # blank out the SQL
-    }
-    $SQL = substituteVariables($SQL);                      # Substitute variables as necessary
+    $SQL = loadSQL(trim(substr($SQL,$+[0])) , $currentSubroutine);             # load the SQL
   }
 
   # Construct the SQL to use
@@ -5849,7 +5761,7 @@ sub processSKELVERS {
   # -----------------------------------------------------------
   # Routine to process the SKELVERS statemnent. The format of the statement is:
   #
-  # )SKELVERS  $Id: processSkeleton.pm,v 1.53 2016/07/06 23:40:02 db2admin Exp db2admin $
+  # )SKELVERS  $Id: processSkeleton.pm,v 1.55 2016/07/14 04:01:03 db2admin Exp db2admin $
   #
   # Usage: processVERSION(<control card>)
   # Returns: sets the internal variable skelVers
@@ -6471,20 +6383,7 @@ sub processFunction {
   elsif ( uc($function) eq "FORMATSQL") { # format the supplied string as SQL
     $funcParm = trim($funcParm);
     if ( uc($funcParm) =~ "^FILE\:|^SQL\:" ) {                    # does the sql start with either SQL: or FILE:
-      my $TMP_File = trim(substr($funcParm,$+));                     # the file name starts at the character after the literal
-      if ( open (my $tmpIn, "<", "$TMP_File" ) ) {
-        $funcParm = "";
-        while ( <$tmpIn> ) {
-          $funcParm .= " $_";
-        }
-        close $tmpIn;
-      }
-      else { # couldn't open the file
-        outputLine("Unable to open $TMP_File");
-        $funcParm = "";
-      }
-      $funcParm = substituteVariables($funcParm);                      # Substitute variables as necessary
-      displayDebug("Select from file is: $funcParm",2,$currentSubroutine);
+      $funcParm = loadSQL(trim(substr($funcParm,$+[0])) , $currentSubroutine);             # load the SQL
     }
     return formatSQL($funcParm);
   }
