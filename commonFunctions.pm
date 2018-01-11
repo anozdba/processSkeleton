@@ -2,7 +2,7 @@
 # --------------------------------------------------------------------
 # commonFunctions.pm
 #
-# $Id: commonFunctions.pm,v 1.14 2016/07/01 01:26:46 db2admin Exp db2admin $
+# $Id: commonFunctions.pm,v 1.22 2017/12/06 21:42:53 db2admin Exp db2admin $
 #
 # Description:
 # Package cotaining common code.
@@ -16,6 +16,9 @@
 # Usage:
 #   trim()
 #     $x = trim($y) # strip blanks from the start and end of a string
+#
+#   timeAdj(TS,minutes)
+#     $x = timeAdj('2016.09.19 08:05:01','-15')   # returns a value of '2016.09.19 07:50:01'
 #
 #   ltrim()
 #     $x = ltrim($y) # strip blanks from the start of a string
@@ -166,6 +169,31 @@
 #
 # ChangeLog:
 # $Log: commonFunctions.pm,v $
+# Revision 1.22  2017/12/06 21:42:53  db2admin
+# add in timeAdj function
+#
+# Revision 1.21  2017/09/25 04:32:31  db2admin
+# add in convertToTimestamp function
+#
+# Revision 1.20  2017/04/24 02:14:43  db2admin
+# change default for datediff to minutes difference
+#
+# Revision 1.19  2017/04/10 03:03:37  db2admin
+# moved an upper case conversion to hopefully not reset the defiend flag
+#
+# Revision 1.18  2017/02/28 04:56:24  db2admin
+# add new parameter to timeDiff to allowing varying return units of measure
+#
+# Revision 1.17  2016/11/28 23:51:54  db2admin
+# modify getOpt to ignore passed parameters that are null
+#
+# Revision 1.16  2016/09/19 05:25:39  db2admin
+# Added in new callable routines displayMinutes timeDiff timeAdd
+#
+# Revision 1.15  2016/08/25 06:29:50  db2admin
+# improve debuggingmessages
+# correct bug in script when script called multiple times
+#
 # Revision 1.14  2016/07/01 01:26:46  db2admin
 # always process web parameters if they are there and if no line parameters are entered
 #
@@ -217,7 +245,7 @@ use strict;
 # export parameters ....
 require Exporter;
 our @ISA = qw(Exporter);
-our @EXPORT_OK = qw(trim ltrim rtrim commonVersion getOpt myDate $getOpt_web $getOpt_optName $getOpt_optValue getOpt_form @myDate_ReturnDesc $myDate_debugLevel $getOpt_diagLevel $getOpt_calledBy $parmSeparators processDirectory $maxDepth $fileCnt $dirCnt localDateTime);
+our @EXPORT_OK = qw(trim ltrim rtrim commonVersion getOpt myDate $getOpt_web $getOpt_optName $getOpt_optValue getOpt_form @myDate_ReturnDesc $myDate_debugLevel $getOpt_diagLevel $getOpt_calledBy $parmSeparators processDirectory $maxDepth $fileCnt $dirCnt localDateTime $datecalc_debugLevel displayMinutes timeDiff timeAdd timeAdj convertToTimestamp);
 
 # persistent variables
 
@@ -231,13 +259,15 @@ my @PARGV;
 my @QPARGV;
 my $getOpt_prm;
 my $getOpt_prm_flag;
-our $getOpt_optName; # contains the option currently being processed
-our $getOpt_optValue; # contains the value of the option currently being processed
-our $getOpt_web; # indicates that the result is for the web
-our $getOpt_calledBy; # indicates the routine calling the module
-our $getOpt_diagLevel; # debug level in getopt
+our $getOpt_optName;         # contains the option currently being processed
+our $getOpt_optValue;        # contains the value of the option currently being processed
+our $getOpt_web;             # indicates that the result is for the web
+our $getOpt_calledBy;        # indicates the routine calling the module
+our $getOpt_diagLevel;       # debug level in getopt
+our $datecalc_debugLevel;    # debug level for date calculation routines
 our $parmSeparators = ' &';  # string contains characters to be used as separators in getOpt_form
 my @monthName;
+my %monthNumber;
 my @monthDays;
 our @myDate_ReturnDesc = ('Day of Month', 'Month', 'Year', 'Day Suffix', 'Month Name', 'Number of days since Base Date','Base Date', 'EOM','EOY','EOFY','BOM','Day of Week','Message');
 our $myDate_debugLevel ;
@@ -271,12 +301,234 @@ BEGIN {
   $monthDays[11] = "30";
   $monthName[12] = "December";
   $monthDays[12] = "31";
-#  $myDate_debugLevel = 0; 
+  %monthNumber = ( 'Jan' =>  '01', 'Feb' =>  '02', 'Mar' =>  '03', 'Apr' =>  '04', 'May' =>  '05', 'Jun' =>  '06',
+                    'Jul' =>  '07', 'Aug' =>  '08', 'Sep' =>  '09', 'Oct' =>  '10', 'Nov' =>  '11', 'Dec' =>  '12',
+                    'January' =>  '01', 'February' =>  '02', 'March' =>  '03', 'April' =>  '04', 'May' =>  '05', 'June' =>  '06',
+                    'July' =>  '07', 'August' =>  '08', 'September' =>  '09', 'October' =>  '10', 'November' =>  '11', 'December' =>  '12' );
+#  $myDate_debugLevel = 2; 
   if ( ! defined($getOpt_diagLevel) ) { $getOpt_diagLevel = 0; }
+  if ( ! defined($datecalc_debugLevel) ) { $datecalc_debugLevel = 0; }
   # processDirectory
   $maxDepth = -1;
   $fileCnt = 0;
   $dirCnt = 0;
+}
+
+# -----------------------------------------------------------------
+# displayMinutes - function to return a supplied minutes value as x days x hours x mins)
+#                  (it will not break the days value into years)
+#
+# Usage: displayMinutes(89);
+# Returns: '1 hour 29 minutes'
+#
+# -----------------------------------------------------------------
+
+sub displayMinutes {
+
+  my $elapsed = shift;
+  my $currentRoutine = 'displayMinutes';
+
+  if ( $datecalc_debugLevel > 1 ) { printDebug( "Total mins: $elapsed", $currentRoutine); }
+
+  if ( $elapsed < 60 ) { return "$elapsed minute" . literalPlural($elapsed); } # under 60 minutes so just return the value
+
+  if ( $elapsed < 1440 ) { # under one day so just return hours and minutes
+    my $mins = $elapsed % 60;
+    my $hours = ($elapsed - $mins)/60;
+    return "$hours hour" . literalPlural($hours) . " $mins minute" . literalPlural($mins);
+  }
+
+  my $mins = $elapsed % 60;
+  my $totalHours = ($elapsed - $mins)/60;
+  my $hours = $totalHours % 24;
+  my $days = ($elapsed - (60 * $hours) - $mins)/1440;
+  return "$days day" . literalPlural($days) . " $hours hour" . literalPlural($hours) . " $mins minute" . literalPlural($mins);
+
+}
+
+# -----------------------------------------------------------------
+# literalPlural - function to return 's' if the parameter is not a 1
+# -----------------------------------------------------------------
+
+sub literalPlural {
+  my $number = shift;
+  if ($number == 1 ) { return ''; } # no s
+  else { return 's'; }
+
+}
+
+# -----------------------------------------------------------------
+# printDebug - function to print formatted input to STDOUT
+#
+# usage:    printDebug('test statement', 'testModule')
+#           the parameters are:
+#               1. message to be displayed
+#               2. module that is doing the calling
+# returns:  'testModule          test statement'  
+#
+# -----------------------------------------------------------------
+
+sub printDebug {
+
+  my $test = shift;
+  my $routine = shift;
+  $routine = substr("$routine                    ",0,20);
+
+  print "$routine - $test\n";
+}
+
+# -----------------------------------------------------------------
+# timeAdd - function to return a timestamp with a specified number of
+#           minutes added
+#
+#           timeAdj takes the same parameters but allows a negative value for 
+#           the adjustment minutes
+#
+# usage:    timeAdd('2016.09.19 08:05:01','15')
+#           the parameters are:
+#               1. timestamp in the format yyyy.mm.dd hh:mm:ss
+#               2. elapsed time in minutes
+# returns:  '2016.09.19 08:20:01'  
+#
+# -----------------------------------------------------------------
+
+sub timeAdd {
+
+  my $currentRoutine = 'timeAdd';
+  my $startTime = shift;
+  my $elapsed = shift;
+  my ($year, $mon, $day, $hr, $min, $sec) = ( $startTime =~ /(\d\d\d\d).(\d\d).(\d\d) (\d\d).(\d\d).(\d\d)/ );
+
+  if ( $datecalc_debugLevel > 0 ) { printDebug( "Timestamp: $startTime (year: $year, month: $mon, day: $day, hour: $hr, min: $min, secs: $sec). Elapsed: $elapsed", $currentRoutine); }
+
+  $min = $min + $elapsed;
+
+  # break the minutes into number of hours and minute remainders
+  my $nMin = $min % 60;                         # final minutes past the hour
+  if ( $datecalc_debugLevel > 0 ) { printDebug( "total minutes: $min, new minute: $nMin", $currentRoutine); }
+  my $tempHr = (($min - $nMin)/60) + $hr;       # this is the number of hours into the future
+
+  my $nHr = $tempHr % 24;                # Final hour on the day
+  $nMin = substr('00' . $nMin, length($nMin), 2); # pad out to 2 digits
+  $nHr = substr('00' . $nHr, length($nHr), 2); # pad out to 2 digits
+  if ( $datecalc_debugLevel > 0 ) { printDebug( "total hours: $tempHr, new hour: $nHr", $currentRoutine); }
+  my @T = myDate("DATE\:$year$mon$day");   # convert date into number of days from the base date
+  my $tempDay = (($tempHr - $nHr)/24) + $T[5]; # days from the base date
+  if ( $datecalc_debugLevel > 0 ) { printDebug( "tempHr: $tempHr, hr: $hr, nHr: $nHr", $currentRoutine);}
+  my @T1 = myDate($tempDay);                   # convert the number of days back to a gregorian day
+  if ( $datecalc_debugLevel > 0 ) { printDebug( "Base Date Offset: $T[5], New offset: $tempDay, New Date: $T1[2].$T1[1].$T1[0]", $currentRoutine); }
+
+  return "$T1[2].$T1[1].$T1[0] $nHr:$nMin:00";
+
+}
+
+# -----------------------------------------------------------------
+# timeAdj - function to return a timestamp with a specified number of
+#           minutes adjusted
+#
+# usage:    timeAdd('2016.09.19 08:05:01','15')
+#           the parameters are:
+#               1. timestamp in the format yyyy.mm.dd hh:mm:ss
+#               2. elapsed time in minutes (negative or positive number)
+# returns:  '2016.09.19 08:20:01'  
+#
+# -----------------------------------------------------------------
+
+sub timeAdj {
+
+  my $currentRoutine = 'timeAdj';
+  my $startTime = shift;
+  my $elapsed = shift;
+  my ($year, $mon, $day, $hr, $min, $sec) = ( $startTime =~ /(\d\d\d\d).(\d\d).(\d\d) (\d\d).(\d\d).(\d\d)/ );
+
+  if ( $datecalc_debugLevel > 0 ) { printDebug( "Timestamp: $startTime (year: $year, month: $mon, day: $day, hour: $hr, min: $min, secs: $sec). Elapsed: $elapsed", $currentRoutine); }
+  
+  # convert timestamp to number of minutes
+  
+  my @T = myDate("DATE\:$year$mon$day");   # convert date into number of days from the base date
+  my $TS_Minutes = ($T[5] * 1440) + ($hr * 60) + $min;
+  if ( $datecalc_debugLevel > 0 ) { printDebug( "Base Date Offset: $T[5], TS_Minutes: $TS_Minutes", $currentRoutine); }
+
+  # adjust the value 
+  $TS_Minutes = $TS_Minutes + $elapsed; # $elapsed may be positive or negative
+  if ( $datecalc_debugLevel > 0 ) { printDebug( "Minutes after adjustment: $TS_Minutes", $currentRoutine); }
+  
+  # Convert the value back to a timestamp .....
+  
+  my $new_days = int($TS_Minutes / 1440) ;         # days past the base date
+  $TS_Minutes = $TS_Minutes - ( $new_days * 1440); # now holds number of minutes past midnight
+  my $new_hours = int($TS_Minutes / 60) ; 
+  if ( $datecalc_debugLevel > 0 ) { printDebug( "New Days Offset: $new_days, Minutes after midnight: $TS_Minutes", $currentRoutine); }
+  $new_hours = substr('00' . $new_hours, length($new_hours), 2); # pad out to 2 digits
+  $TS_Minutes = $TS_Minutes - ( $new_hours * 60);  # now holds number of minutes past the hour
+  $TS_Minutes = substr('00' . $TS_Minutes, length($TS_Minutes), 2); # pad out to 2 digits
+  if ( $datecalc_debugLevel > 0 ) { printDebug( "New Hours Offset: $new_hours, Minutes after the hour: $TS_Minutes", $currentRoutine); }
+
+  # convert the days count back to a gregorian date
+  @T = myDate($new_days);   
+
+  if ( $datecalc_debugLevel > 0 ) { printDebug( "Returned Date: $T[2].$T[1].$T[0] $new_hours:$TS_Minutes:$sec", $currentRoutine); }
+
+  return "$T[2].$T[1].$T[0] $new_hours:$TS_Minutes:$sec";
+
+}
+
+# -----------------------------------------------------------------
+# timeDiff - function to return the number of minutes between 2 supplied 
+#            timestamps
+#
+# usage:    timeDiff('2016.09.19 08:05:01','2016.09.19 08:20:01'[,'M'])
+#           the parameters are:
+#               1. timestamp in the format yyyy.mm.dd hh:mm:ss
+#               2. timestamp in the format yyyy.mm.dd hh:mm:ss
+#               Note: option 3rd parameter S, M, H or D indicating the unit
+#                     or measure of the returned value
+# returns:  '15'
+#
+# -----------------------------------------------------------------
+
+sub timeDiff {
+
+  my $currentRoutine = 'timeDiff';
+  my $startTime = shift;
+  my $endTime = shift;
+  my $UOM = shift;
+
+  if ( ! defined($UOM) ) { $UOM = 'M'; } # when not supplied thedefault is minutes
+  $UOM = uc($UOM);
+
+  # start time is formatted yyyy.mm.dd hh:mm:ss
+
+  my ($sYear, $sMon, $sDay, $sHr, $sMin, $sSec) = ( $startTime =~ /(\d\d\d\d).(\d\d).(\d\d) (\d\d).(\d\d).(\d\d)/ );
+  my @T = myDate("DATE\:$sYear$sMon$sDay");
+  my $startDayOffset = $T[5] ;
+  if ( $datecalc_debugLevel > 1 ) { for ( my $j = 0 ; $j <= $#T; $j++) { print "$j: $T[$j]\n"; }}
+  my $startMinsPastMidnight = ($sHr*60) + $sMin;
+
+  # end time is formatted  yyyy.mm.dd hh:mm:ss
+
+  my ($eYear, $eMon, $eDay, $eHr, $eMin, $eSec) = ( $endTime =~ /(\d\d\d\d).(\d\d).(\d\d) (\d\d).(\d\d).(\d\d)/ );
+  @T = myDate("DATE\:$eYear$eMon$eDay");
+  my $endDayOffset = $T[5] ;
+  if ( $datecalc_debugLevel > 1 ) { for ( my $j = 0 ; $j <= $#T; $j++) { print "$j: $T[$j]\n"; }}
+  my $endMinsPastMidnight = ($eHr*60) + $eMin;
+
+  my $daysDiff = $endDayOffset - $startDayOffset;
+  my $hrsDiff  = ($daysDiff * 24 ) + $eHr - $sHr;
+  my $minsDiff = ($hrsDiff * 60  ) + $eMin - $sMin;
+  my $secsDiff = ($minsDiff * 60  ) + $eSec - $sSec;
+
+  if ( $datecalc_debugLevel > 0 ) { printDebug( "Start Time: $startTime, End Time: $endTime, Mins Diff: $minsDiff", $currentRoutine); }
+  if ( $datecalc_debugLevel > 1 ) { printDebug( "Start Day Offset: $startDayOffset, Start Mins Past Midnight: $startMinsPastMidnight", $currentRoutine); }
+  if ( $datecalc_debugLevel > 2 ) { printDebug( "Start Components: $sYear#$sMon#$sDay#$sHr#$sMin#$sSec", $currentRoutine); }
+  if ( $datecalc_debugLevel > 1 ) { printDebug( "End Day Offset: $endDayOffset, End Mins Past Midnight: $endMinsPastMidnight", $currentRoutine); }
+  if ( $datecalc_debugLevel > 2 ) { printDebug( "End Components: $eYear#$eMon#$eDay#$eHr#$eMin#$eSec", $currentRoutine); }
+
+  if ( $UOM eq 'D' ) { return $daysDiff; }
+  elsif ( $UOM eq 'H' ) { return $hrsDiff; }
+  elsif ( $UOM eq 'S' ) { return $secsDiff; }
+  else  { return $minsDiff; }
+
 }
 
 # -----------------------------------------------------------------
@@ -286,7 +538,7 @@ BEGIN {
 
 sub commonVersion {
 
-  my $ID = '$Id: commonFunctions.pm,v 1.14 2016/07/01 01:26:46 db2admin Exp db2admin $';
+  my $ID = '$Id: commonFunctions.pm,v 1.22 2017/12/06 21:42:53 db2admin Exp db2admin $';
   my @V = split(/ /,$ID);
   my $nameStr=$V[1];
   (my $name,my $x) = split(",",$nameStr);
@@ -355,6 +607,7 @@ sub getOpt {
     # This is executed only for the first call
     if ( $#ARGV > -1 ) { # only do this bit if parameters are passed
       for ($i=0 ; $i <= $#ARGV ; $i++ ) {        # loop through the arguments
+        if ( trim($ARGV[$i]) eq '' ) { next; }   # if the parameter is null then ignore it
         if ( substr($ARGV[$i],0,2) eq "--" ) {   # if it is an extended parameter (begins with --)
           $PARGV[$#PARGV + 1] = $ARGV[$i];
         }
@@ -827,7 +1080,7 @@ sub myDate {
   my $AddBit ; # date adjuster for date pre and post the end of February
   my $DOW19650101 = "FRI";
   my @DOWliterals = ("SUN","MON","TUE","WED","THU","FRI","SAT");
-  our $myDate_debugLevel;
+#  our $myDate_debugLevel;
   
   if ( $myDate_debugLevel > 0 ) { print "myDate Debug level set to $myDate_debugLevel\n"; }  
   
@@ -840,6 +1093,8 @@ sub myDate {
   my @parms = split(/ /,"@_");
   my $HoldDays = $parms[0];
   my $dateAdjust = 0;
+
+  $monthDays[2] = 28;
 
   # so at least 1 parameter to get here ...
 
@@ -1051,6 +1306,9 @@ sub myDate {
 
   }
   else { # a date of the formet DATE: or DATE= was provided $Date holds that value
+
+    if ( $myDate_debugLevel > 0 ) { print "Processing gregorian date of $Date\n"; }
+
     $EDD = substr($Date,6,2);
     $EMM = substr($Date,4,2);
     $EYY = substr($Date,0,4);
@@ -1102,7 +1360,7 @@ sub myDate {
       }
      $NumDays = $NumDays + $DaysInYear;
      $Year = $Year + 1;
-     # print "NumDays=$NumDays Year=$Year LeapYear=$LeapYear Days in Year=$DaysInYear\n";
+     if ( $myDate_debugLevel > 0 ) {  print "NumDays=$NumDays Year=$Year LeapYear=$LeapYear Days in Year=$DaysInYear\n"; }
     }
     $Rem = $EYY % 4;
     $AddBit = 0;
@@ -1125,8 +1383,11 @@ sub myDate {
       $cumDays[$i] = $cumDays[$lastMonth] + $monthDays[$lastMonth];
     }
 
+    if ( $myDate_debugLevel > 0 ) { for ( my $k = 0 ; $k <= $#cumDays ; $k++ ) { print "Cummlative month $k: $cumDays[$k]\n"; } }
+
     $Month = $monthName[$EMM];
     $NumDays = $NumDays + $cumDays[$EMM] + $EDD;
+    if ( $myDate_debugLevel > 0 ) { print "Total days to beginning of this month: $cumDays[$EMM], days this month: $EDD\n"; }
 
     if ($EDD == 1) { $BOM = "Y" ;}
     if ($EDD == $monthDays[$EMM]) {
@@ -1159,8 +1420,8 @@ sub myDate {
     $tmp = ($NumDays+5) % 7;
     $DOW = $DOWliterals[$tmp];
 
+    if ( $myDate_debugLevel > 0 ) { print "Date of $Date ($EDD$Suff of $Month, $EYY) has a value of $NumDays\n"; }
     return ($EDD,$EMM,$EYY,$Suff,$Month,$NumDays,$BaseDate,$EOM,$EOY,$EOFY,$BOM,$DOW,'');
-    #print "Date of $Date ($EDD$Suff of $Month, $EYY) has a value of $NumDays\n";
   }
 }
 
@@ -1229,6 +1490,75 @@ sub localDateTime {
   }
   my $yyyy_mm_dd = (1900 + $year) . '-' . $mon . '-' . $day;
   return ($yyyy_mm_dd . ' ' . $hour . ':' . $min . ':' . $sec);
+}
+
+# -----------------------------------------------------------------
+# convertToTimestamp - convert a datetime to a standard timestamp format
+# The script will attempt to figure out he format of the input date
+# -----------------------------------------------------------------
+
+sub convertToTimestamp {
+
+  # Supported input formats:
+  #      1. Sep 17, 2017 6:00:07 PM
+  #
+  # The output format will always be:
+  #         2017.09.17 18:00:07
+  
+  my $inDate = shift;
+
+  my ( $sec, $min, $hour, $day, $mon, $year);
+
+  # check for quotes ..... (and remove them)
+
+  if ( $inDate =~ /^".*"$/ ) {
+    ($inDate) = ($inDate =~ /^"(.*)"$/);
+  }
+
+  my @part = split(" ", $inDate);
+
+  if ( ! defined($part[4]) ) { # 4 parts not found - ignore call
+    return '';
+  }
+
+  # process month
+  if ( ! defined($monthNumber{$part[0]}) ) { # month not entered as the first parameter - return with no result
+    return '';
+  }
+  else {
+    $mon = $monthNumber{$part[0]};
+  }
+  
+  my @tmp;
+  # process the day .....
+  if ( $part[1] =~ /,/ ) {
+    @tmp = split(",", $part[1]); 
+    $day = trim($tmp[0]); # just dropping the comma
+  }
+  else {
+    $day = trim($part[1]);
+  }
+   
+  # process the year .....
+  $year = trim($part[2]); 
+
+  # process the time .....
+  @tmp = split(":", $part[3]); 
+  $hour = trim($tmp[0]);
+  $min = trim($tmp[1]);
+  $sec = trim($tmp[2]);
+
+  if ( ($part[4] eq 'PM') && ( $hour < 12 ) ) { $hour = $hour + 12; } # adjust to 24 hr clock
+   
+  # fill out numeric fields
+  
+  $day = substr("0" . $day, length($day)-1,2);       # pad the day number to 2 digits
+  $mon = substr("0" . $mon, length($mon)-1,2);       # pad the month value to 2 digits
+  $hour = substr("0" . $hour, length($hour)-1,2);    # pad the day number to 2 digits
+  $min = substr("0" . $min, length($min)-1,2);       # pad the day number to 2 digits
+  $sec = substr("0" . $sec, length($sec)-1,2);       # pad the day number to 2 digits
+  
+  return ($year . '.' . $mon . '.' . $day . ' ' . $hour . ':' . $min . ':' . $sec);
 }
 
 1;
