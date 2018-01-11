@@ -93,15 +93,15 @@ $opPrecedence{'=='} = 1;
 $opPrecedence{'=~'} = 1;
 $opPrecedence{'EQ'} = 1;
 $opPrecedence{'='} = 1;
-$opPrecedence{'*'} = 3;
-$opPrecedence{'/'} = 3;
-$opPrecedence{'%'} = 3;
-$opPrecedence{'+'} = 4;
-$opPrecedence{'-'} = 4;
+$opPrecedence{'*'} = 4;
+$opPrecedence{'/'} = 4;
+$opPrecedence{'%'} = 4;
+$opPrecedence{'+'} = 3;
+$opPrecedence{'-'} = 3;
 # unary operators
-$opPrecedence{'!'} = 0;
-$opPrecedence{'m'} = 0;
-$opPrecedence{'p'} = 0;
+$opPrecedence{'!'} = 4;
+$opPrecedence{'u-'} = 4;
+$opPrecedence{'u+'} = 4;
 
 our $calcTestRoutines = oct'0b11111111';   # variable containing which tests to run in the testRoutine sub
 
@@ -781,10 +781,16 @@ sub evaluateInfix {
         }
       }
       displayDebug("Operator on top of stack is: >$stack[$#stack]<, top of stack is $#stack, \$token is $token",1,$currentSubroutine);
-      while ( ($#stack > -1) && isOperator($stack[$#stack]) && ( $opPrecedence{$token} >= $opPrecedence{$stack[$#stack]} ) ) { # it's an operator on the top of stack and precendence of token is less or equal
+      while ( ($#stack > -1) && isOperator($stack[$#stack]) && ( $stack[$#stack] ne "\(" ) && ( $opPrecedence{$stack[$#stack]} >= $opPrecedence{$token} ) ) { # it's an operator on the top of stack and precendence of token is less or equal
                                                                                                                                # than precedence of the operator on the top of the stack
-        if( $opPrecedence{$stack[$#stack]} <= $opPrecedence{$token} ) {
+        if( $opPrecedence{$stack[$#stack]} > $opPrecedence{$token} ) { # pop all operators on the stack with a lower precedence
           push(@output, pop(@stack)); # pop it off of the stack and put it to output
+        }
+        elsif ( (! isUnaryOperator($token)) && ($opPrecedence{$token} == $opPrecedence{$stack[$#stack]})  ) { # if it has an equal precedence and it is not a unary operator then pop it
+          push(@output, pop(@stack)); # pop it off of the stack and put it to output
+        }
+        else {
+          last; # we're done here
         }
       }
       displayDebug("Pushing operator $token stack size = $#stack",1,$currentSubroutine);
@@ -801,6 +807,7 @@ sub evaluateInfix {
         push(@output, pop(@stack)); # pop it off of the stack and put it to output
         displayDebug("added to output stack : $output[$#output]",1,$currentSubroutine);
       }
+      displayDebug("DUMPOUTPUT",2,$currentSubroutine);
       if ( defined($stack[$#stack]) ) {  # top of stack is a '('
         pop(@stack);  # pop and discard the (
         if ( ($#stack > -1) && isFunction($stack[$#stack]) ) { # if it is a function on top of the stack, pop the function call off as well
