@@ -2,7 +2,7 @@
 # --------------------------------------------------------------------
 # processSkeleton.pm
 #
-# $Id: processSkeleton.pm,v 1.55 2016/07/14 04:01:03 db2admin Exp db2admin $
+# $Id: processSkeleton.pm,v 1.65 2018/01/04 00:49:12 db2admin Exp db2admin $
 #
 # Description:
 # Script to process a skeleton
@@ -31,6 +31,40 @@
 # ChangeLog:
 #
 # $Log: processSkeleton.pm,v $
+# Revision 1.65  2018/01/04 00:49:12  db2admin
+# add in code to allow the implicit specification of a variable in a )FUNC command
+# i.e. )FUNC int :a = :a could be written as )FUNC int :a
+# also improved the error message for operator not found to specify the function type
+#
+# Revision 1.64  2017/12/27 01:18:17  db2admin
+# Add in REPL and WEBSAFE functions
+#
+# Revision 1.63  2017/08/08 23:44:26  db2admin
+# add code to allow variable names to be enclosed by braces {} to simplify variable identification
+#
+# Revision 1.62  2017/08/08 23:13:15  db2admin
+# Allow variable substitution on the )DMPHDR card
+#
+# Revision 1.61  2017/08/08 06:00:39  db2admin
+# initialise the loop count variables to zero at start of loop
+#
+# Revision 1.60  2017/07/19 01:13:06  db2admin
+# allow SQL= and FILE= as alternatives to SQL: and FILE: (all have identical meaning)
+#
+# Revision 1.59  2017/04/05 22:50:48  db2admin
+# only do decimal places if there is a decimal point
+#
+# Revision 1.58  2017/04/05 22:48:29  db2admin
+# change the selection criteria for truncating and decimal places
+#
+# Revision 1.57  2017/04/05 05:56:43  db2admin
+# Add in functionality that allows the setting of displayed decimal places
+# Allow the setting of decimal places on the TRUNCZEROES card
+# add in )DECIMALPLACES control card
+#
+# Revision 1.56  2017/01/05 23:23:14  db2admin
+# add in )GRAPHLABEL command
+#
 # Revision 1.55  2016/07/14 04:01:03  db2admin
 # centralise SQL loads so that common processing can be done
 # When loading SQL dont load lines that are prefixed with -- (comments)
@@ -298,6 +332,8 @@ my @traceLevelStack = ();                 # stack to manage trace levels
 my $SQLError = 1;                         # flag indicating that the open cursor returned no rows (worked but couldn't find anything)
 my %weekDays = ( "MON", "Monday", "TUE", "Tuesday", "WED", "Wednesday", "THU", "Thursday", "FRI", "Friday", "SAT", "Saturday", "SUN", "Sunday");
 my $truncateTrailingZeroes = 0;           # flag indicating if trailing zeroes should be removed from returned database values
+my $cursorDecimalPlaces = -1;             # Number of decimal places to retain after truncating zeroes
+my $currentVariable = '';                 # this holds the name of the variable to be assigned the return value from a )FUNC statement 
 
 # Database connection detail arrays ....
 
@@ -366,6 +402,7 @@ my $currentGraphNum= 0;                   # current label for the graph location
 my $graphStarted = 0;                     # flag indicating that the first part of the vis.js script has been written
 my %graphGroupOptions = ();               # empty out the group array
 my %graphGroupName = ();                  # empty out the group name array
+my %graphLabel = ();                      # empty out the graph label array
 my @YAxisValues = ();                     # Y axis values for the graph 
 my $graphOptions = '';                    # graph options set with the )GRAPHOPT statement
 my $graphType = 'LINE';                   # type of graph to produce
@@ -508,7 +545,7 @@ sub skelVersion {
   # -----------------------------------------------------------
 
   my $currentSubroutine = 'skelVersion'; 
-  my $ID = '$Id: processSkeleton.pm,v 1.55 2016/07/14 04:01:03 db2admin Exp db2admin $';
+  my $ID = '$Id: processSkeleton.pm,v 1.65 2018/01/04 00:49:12 db2admin Exp db2admin $';
   my @V = split(/ /,$ID);
   my $nameStr=$V[1];
   my @N = split(",",$nameStr);
@@ -1649,12 +1686,26 @@ sub substituteVariables {
       # now identify the variable name we are looking for
       my $varName = "";
       $varTerminatedByPeriod = 0;
+      my $varEnclosedInBrackets = 0;
 
       if ( $linePos <= length($inputString) ) {displayDebug("termChar=$skelTermChar, cmpChar=" . substr($inputString, $linePos, 1),3,$currentSubroutine); }
-      while ( ($linePos <= length($inputString) ) && (index( $skelTermChar, substr($inputString, $linePos, 1) ) == -1 ) ) {
-        $varName = $varName . substr($inputString, $linePos, 1);
-        $linePos++;
-        if ( $linePos <= length($inputString) ) { displayDebug("varName= $varName, termChar=$skelTermChar, cmpChar=" . substr($inputString, $linePos, 1),3,$currentSubroutine); }
+ 
+      # $linePos is pointing to the start of the variable name 
+      if ( substr($inputString, $linePos, 1) eq '{' ) { # variable name is enclosed in brackets ... so just look for closing bracket
+        $varEnclosedInBrackets = 1;
+        $linePos++;     # move to the next char
+        while ( ($linePos <= length($inputString) ) && (substr($inputString, $linePos, 1) ne '}' ) ) {
+          $varName = $varName . substr($inputString, $linePos, 1);
+          $linePos++;     # move to the next char
+        }
+        if ($linePos <= length($inputString) ) { $linePos++; }    # move to the next char (skip the terminating bracket
+      }
+      else { # normal variable identification
+        while ( ($linePos <= length($inputString) ) && (index( $skelTermChar, substr($inputString, $linePos, 1) ) == -1 ) ) {
+          $varName = $varName . substr($inputString, $linePos, 1);
+          $linePos++;
+          if ( $linePos <= length($inputString) ) { displayDebug("varName= $varName, termChar=$skelTermChar, cmpChar=" . substr($inputString, $linePos, 1),3,$currentSubroutine); }
+        }
       }
 
       displayDebug("Variable: $varName, \$linePos=$linePos",1,$currentSubroutine);
@@ -1671,10 +1722,15 @@ sub substituteVariables {
         next;                                                                        # loop aroud to get to the next variable
       }
       else { #var name has been identified
-        if ( substr($inputString, $linePos, 1) eq '.' ) { # skip periods terminating variables
-          $linePos++; 
-          $varTerminatedByPeriod = 1;
-        } 
+        if ( $varEnclosedInBrackets ) { # period not terminating variable
+          # treat any subsequent periods as just characters
+        }
+        else {
+          if ( substr($inputString, $linePos, 1) eq '.' ) { # skip periods terminating variables
+            $linePos++; 
+            $varTerminatedByPeriod = 1;
+          } 
+        }
       }
       $fieldEnd = $linePos -1;
 
@@ -1750,6 +1806,7 @@ sub substituteVariables {
             # SQL_TIME            10
             # SQL_TIMESTAMP       11
             # SQL_VARCHAR         12
+            #                     93    Timestamp
             # SQL_LONGVARCHAR     -1
             # SQL_BINARY          -2
             # SQL_VARBINARY       -3
@@ -2476,6 +2533,7 @@ sub processFDOF {
     
       # ok to process the card .....
 
+      setVariable('LASTFDOFCount','0');                        # initialise variable
       my $fileRef = 'FDOFRef';                                 # file ref for a FDOF is fixed as FDOFRef    
       my $fileName = getToken($card);                          # (FILENAME) nameof the file to be opened
       my $lit = getToken($card);                               # should be the literal 'USING'
@@ -2761,7 +2819,7 @@ sub processDMPHDR {
   my $currentSubroutine = 'processDMPHDR';
 
   my $card = shift;                                            # get the card information
-  my $file = trim(substr($card,$currentLinePosition));         # (SQL Statement) SQL to be used
+  my $file = trim(substituteVariables(substr($card,$currentLinePosition)));         # (SQL Statement) SQL to be used
   displayDebug("File to be downloaded to is: $file",2,$currentSubroutine);
 
   if ( $skelSelSkipCards eq "No" ) {                           # not skipping cards because of a failed )SEL
@@ -2797,7 +2855,8 @@ sub processDMP {
   if ( $skelSelSkipCards eq "No" ) {                           # not skipping cards because of a failed )SEL
     if ( $skelDOTSkipCards eq "No" ) {                         # Not within a )DOT being skipped
 
-      if ( uc($SQL) =~ "^FILE\:|^SQL\:" ) {                    # does the sql start with either SQL: or FILE:
+      setVariable('LASTDMPCount','0');                         # initialise variable
+      if ( uc($SQL) =~ "^FILE\:|^SQL\:|^SQL\=|^FILE\=" ) {                    # does the sql start with either SQL: or FILE: or SQL= or FILE=
         $SQL = loadSQL(trim(substr($SQL,$+[0])) , $currentSubroutine);             # load the SQL
       }
 
@@ -2935,18 +2994,33 @@ sub getTabValue {
         $formattedValue = trim($fieldValue);         # trim spaces from the front and end of the field  
         displayDebug("Column has a value of $formattedValue [char, vchar or wchar field]\n",2,$currentSubroutine);
       }
-      else { # no need to trim - not a varchar
-        if ( $truncateTrailingZeroes && ($fieldValue =~ /\./) ) { # if there are trailing zeroes then remove them (but only if there is a decimal point)
-          displayDebug("Before: $fieldValue<\n",2,$currentSubroutine);
-          $fieldValue =~ s/0*$//g;  
-          displayDebug("After: $fieldValue<\n",2,$currentSubroutine);
+      else { # no need to trim - not a varchar, check for trunc or decimal places
+        if ( ' 3 ' =~ / $fieldType / ) { # it is decimal so do truncating
+          if ( $truncateTrailingZeroes && ($fieldValue =~ /\./) ) { # if there are trailing zeroes then remove them (but only if there is a decimal point)
+            displayDebug("Before Tr: $fieldValue<\n",2,$currentSubroutine);
+            $fieldValue =~ s/0*$//g;  
+            if ( $fieldValue =~ /\.$/ ) { # last char is a period
+              ($fieldValue) = ($fieldValue =~ /(.*)\.$/);   # drop the last character
+            }
+            displayDebug("After  Tr: $fieldValue<\n",2,$currentSubroutine);
+          }
+          if ( $cursorDecimalPlaces != -1 ) { # decimal places has been set
+            displayDebug("Before DP: $fieldValue<\n",2,$currentSubroutine);
+            $fieldValue = sprintf("%." . $cursorDecimalPlaces . "f", $fieldValue);
+            displayDebug("After  DP: $fieldValue<\n",2,$currentSubroutine);
+          }
         }
-        $formattedValue = $fieldValue;
+        if ( $skelDebugLevel > 0 ) { 
+          $formattedValue = "($fieldType) $fieldValue";
+        }
+        else {
+          $formattedValue = $fieldValue;
+        }
         displayDebug("Column has a value of $formattedValue [not char]\n",2,$currentSubroutine);
       }
     }
   }
-  else { # fieldType is not numeric 
+  else { # fieldType is not numeric  (put in for DBMS's that supply character strings - i.e. SQLITE)
     if ( ! defined($fieldValue) ) { return 'NULL' ; } # if the field isn't defined then set it's value to NULL
     
     if ( $fieldType eq "TEXT" ) {         # character field
@@ -2957,6 +3031,11 @@ sub getTabValue {
       if ( $truncateTrailingZeroes  && ($fieldValue =~ /\./) ) { # if there are trailing zeroes then remove them (but only if there is a decimal point)
         $fieldValue =~ s/0*$//g;  
       }
+      if ( ($cursorDecimalPlaces != -1) && ($fieldValue =~ /\./) ) { # decimal places has been set
+        displayDebug("Before: $fieldValue<\n",2,$currentSubroutine);
+        $fieldValue = sprintf("%." . $cursorDecimalPlaces . "f", $fieldValue);
+        displayDebug("After: $fieldValue<\n",2,$currentSubroutine);
+      }
       $formattedValue = $fieldValue;
       displayDebug("Column has a value of $formattedValue [not TEXT]\n",2,$currentSubroutine);
     }
@@ -2965,6 +3044,38 @@ sub getTabValue {
   return $formattedValue;
 
 } # end of getTabValue
+
+sub processGRAPHLABEL {
+  # -----------------------------------------------------------
+  # Routine to establish the labels for graphs
+  #
+  # The GRAPHLABEL control statement looks like )GRAPHLOCAL <label Ref> <label caption> 
+  #
+  # so a sample card would be:
+  #
+  #    )GRAPHLABEL testdata test data introduced here
+  #
+  # Usage: processGRAPHLABEL(<control Card>)
+  # Returns: nothing but will store the label information for later processing
+  # -----------------------------------------------------------  
+  
+  my $currentSubroutine = 'processGRAPHLABEL';
+
+  my $card = shift;                                            # get the card information
+  my $labelRef = getToken($card);                              # (GROUPREF) this is the group ID assigned (should match a group ID in the data)
+  my $labelCaption = '';
+  if ( $currentLinePosition < length($card)) {                 # there is a caption
+    $labelCaption = trim(substr($card,$currentLinePosition));  # the caption is the rest of the line
+  }
+  
+  if ($labelCaption eq '' )  { # no caption so ignore the card
+    displayDebug("No caption on )GRAPHLABEL control card so card ignored\n",2,$currentSubroutine);
+    return;
+  }
+  
+  $graphLabel{$labelRef} = $labelCaption;                               # put name on stackA
+  
+} # end of processGRAPHLABEL
 
 sub processGRAPHGROUP {
   # -----------------------------------------------------------
@@ -3042,9 +3153,10 @@ sub processGRAPH {
   if ( $skelSelSkipCards eq "No" ) {                           # not skipping cards because of a failed )SEL
     if ( $skelDOTSkipCards eq "No" ) {                         # Not within a )DOT being skipped
       
+      setVariable('LASTGRAPHCount','0');                       # initialise variable
       # process the supplied SQL
   
-      if ( uc($SQL) =~ "^FILE\:|^SQL\:" ) {                    # does the sql start with either SQL: or FILE:
+      if ( uc($SQL) =~ "^FILE\:|^SQL\:|^FILE\=|^SQL\=" ) {                    # does the sql start with either SQL: or FILE: or FILE= or SQL=
         $SQL = loadSQL(trim(substr($SQL,$+[0])) , $currentSubroutine);             # load the SQL
       }
       
@@ -3317,6 +3429,11 @@ sub displayGraph_start {
         }
         outputLine('  ];');
         outputLine('  var groups = new vis.DataSet();');
+
+        foreach my $i (sort by_key keys %graphLabel) {
+          outputLine('      var ' . $i . ' = { content: "' . $graphLabel{$i} . '" }' );
+        }
+
         my $arrayCount = 0;                                    # this should mirrow the order that the NAMES array was built
         foreach my $i (sort by_key keys %graphGroupName) {
           outputLine('      groups.add({ id: ' . $i . ', content: names[' . $arrayCount . '] , ' . $graphGroupOptions{$i} . ' });' );
@@ -3462,6 +3579,7 @@ sub processCTAB {
   if ( $skelSelSkipCards eq "No" ) {                           # not skipping cards because of a failed )SEL
     if ( $skelDOTSkipCards eq "No" ) {                         # Not within a )DOT being skipped
             
+      setVariable('LASTCTABCount','0' );                       # initialise variable
       if ( substr($SQL,0,1) eq '(' ) {
         ($parms, $newSQL) = ($SQL =~ /\((.*?)\)(.*)/);
         $SQL = trim($newSQL);
@@ -3492,7 +3610,7 @@ sub processCTAB {
         displayDebug("Extracted button name is: $buttonName, form is: $form, SQL is: $SQL",1,$currentSubroutine);
       }
             
-      if ( uc($SQL) =~ "^FILE\:|^SQL\:" ) {                    # does the sql start with either SQL: or FILE:
+      if ( uc($SQL) =~ "^FILE\:|^SQL\:|^FILE\=|^SQL\=" ) {                    # does the sql start with either SQL: or FILE: or SQL= or FILE=
         $SQL = loadSQL(trim(substr($SQL,$+[0])) , $currentSubroutine);             # load the SQL
       }
 
@@ -3773,6 +3891,7 @@ sub processSBOX {
   if ( $skelSelSkipCards eq "No" ) {                           # not skipping cards because of a failed )SEL
     if ( $skelDOTSkipCards eq "No" ) {                         # Not within a )DOT being skipped
       
+      setVariable('LASTSBOXCount', '0');                       # initialise variable
       if ( substr($SQL,0,1) eq '(' ) {
         ($parms, $newSQL) = ($SQL =~ /\((.*?)\)(.*)/);
         $SQL = trim($newSQL);
@@ -3789,7 +3908,7 @@ sub processSBOX {
         displayDebug("Extracted ID is: $ID, button name is: $buttonName, form is: $formName, SQL is: $SQL",1,$currentSubroutine);
       }
 
-      if ( uc($SQL) =~ "^FILE\:|^SQL\:" ) {                    # does the sql start with either SQL: or FILE:
+      if ( uc($SQL) =~ "^FILE\:|^SQL\:|^FILE\=|^SQL\=" ) {                    # does the sql start with either SQL: or FILE: or SQL= or FILE=
         $SQL = loadSQL(trim(substr($SQL,$+[0])) , $currentSubroutine);             # load the SQL
       }
 
@@ -4022,10 +4141,12 @@ sub processFTAB {
   
   my $TMP_File = "";                                           # temporary file name
   
+
   if ( $skelSelSkipCards eq "No" ) {                           # not skipping cards because of a failed )SEL
     if ( $skelDOTSkipCards eq "No" ) {                         # Not within a )DOT being skipped
       
-      if ( uc($SQL) =~ "^FILE\:|^SQL\:" ) {                    # does the sql start with either SQL: or FILE:
+      setVariable('LASTFTABCount','0');                            # Initialise the count in case of failure
+      if ( uc($SQL) =~ "^FILE\:|^SQL\:|^FILE\=|^SQL\=" ) {                    # does the sql start with either SQL: or FILE: or SQL= or FILE=
         $SQL = loadSQL(trim(substr($SQL,$+[0])) , $currentSubroutine);             # load the SQL
       }
       
@@ -4203,6 +4324,7 @@ sub processFXTAB {
   if ( $skelSelSkipCards eq "No" ) {                           # not skipping cards because of a failed )SEL
     if ( $skelDOTSkipCards eq "No" ) {                         # Not within a )DOT being skipped
       
+      setVariable('LASTFXTABCount','0');                       # initialise variable
       # check to see if an action type has been set .....
       
       my @typeCheck = split(" ",$SQL);
@@ -4225,7 +4347,7 @@ sub processFXTAB {
       
       # load up the SQL if it is in a file
       
-      if ( uc($SQL) =~ "^FILE\:|^SQL\:" ) {                    # does the sql start with either SQL: or FILE:
+      if ( uc($SQL) =~ "^FILE\:|^SQL\:|^FILE\=|^SQL\=" ) {                    # does the sql start with either SQL: or FILE: or SQL= or FILE=
         $SQL = loadSQL(trim(substr($SQL,$+[0])) , $currentSubroutine);             # load the SQL
       }
       
@@ -4446,7 +4568,7 @@ sub processDOCMD {
     
       setVariable('rowsAffected',0);                           # reset the internal variable
       
-      if ( uc($SQL) =~ "^FILE\:|^SQL\:" ) {                    # does the sql start with either SQL: or FILE:
+      if ( uc($SQL) =~ "^FILE\:|^SQL\:|^FILE\=|^SQL\=" ) {                    # does the sql start with either SQL: or FILE: or SQL= or FILE=
         $SQL = loadSQL(trim(substr($SQL,$+[0])) , $currentSubroutine);             # load the SQL
       }
       
@@ -4519,7 +4641,8 @@ sub processFVTAB {
   if ( $skelSelSkipCards eq "No" ) {                           # not skipping cards because of a failed )SEL
     if ( $skelDOTSkipCards eq "No" ) {                         # Not within a )DOT being skipped
       
-      if ( uc($SQL) =~ "^FILE\:|^SQL\:" ) {                    # does the sql start with either SQL: or FILE:
+      setVariable('LASTFVTABCount','0');                       # initialise variable
+      if ( uc($SQL) =~ "^FILE\:|^SQL\:|^FILE\=|^SQL\=" ) {                    # does the sql start with either SQL: or FILE: or SQL= or FILE=
         $SQL = loadSQL(trim(substr($SQL,$+[0])) , $currentSubroutine);             # load the SQL
       }
       
@@ -4645,7 +4768,7 @@ sub processDOT {
   # read in data if it is held in a file
 
   if ( $where ne '' ) {                        # only bother if there is a where clause
-    if ( uc($where) =~ "^FILE\:|^SQL\:" ) {                    # does the sql start with either SQL: or FILE:
+    if ( uc($where) =~ "^FILE\:|^SQL\:|^FILE\=|^SQL\=" ) {                    # does the sql start with either SQL: or FILE: or SQL= or FILE=
       $where = loadSQL(trim(substr($where,$+[0])) , $currentSubroutine);             # load the SQL
     }
   }
@@ -4684,7 +4807,7 @@ sub processXDOT {
   
   # read in data if it is held in a file
 
-  if ( uc($SQL) =~ "^FILE\:|^SQL\:" ) {                    # does the sql start with either SQL: or FILE:
+  if ( uc($SQL) =~ "^FILE\:|^SQL\:|^FILE\=|^SQL\=" ) {                    # does the sql start with either SQL: or FILE: or SQL= or FILE=
     $SQL = loadSQL(trim(substr($SQL,$+[0])) , $currentSubroutine);             # load the SQL
   }
 
@@ -4715,6 +4838,7 @@ sub establishDOTLoop {
 
   if ( ( $skelSelSkipCards eq "No" ) ) { # not excluded because of a failed )SEL
     if ( ( $skelDOTSkipCards eq "No" ) ) { # not excluded because of a )DOT that returned zero rows
+      setVariable('LASTDOTCount','0');               # initialise variable
       my $cnt = push(@controlStack,($skelDOEXECCount,$skelDOFCount,$skelDOTCount,$skelSELCount));      # save counts on entry
       displayDebug("PUSHING onto stack - #entries $cnt",2,$currentSubroutine);
       displayDebug("Pushing control counts: \$skelDOFCount=$skelDOFCount,\$skelDOTCount=$skelDOTCount,\$skelSELCount=$skelSELCount",2,$currentSubroutine);
@@ -5657,17 +5781,58 @@ sub processTRACE {
 
 } # end of processTRACE 
 
+sub processDECIMALPLACES {
+  # -----------------------------------------------------------
+  # Routine to set the truncatetrailingzeroes flag
+  #
+  # Usage: )TRUNCZEROES [number of decimal places]
+  # Returns: nothing, but sets the truncatetrailingzeroes flag
+  # -----------------------------------------------------------
+
+  my $currentSubroutine = 'processDECIMALPLACES';
+  my $card = shift;                                                         # establish the card being processed
+  my $precision = getToken($card);
+
+  if ( $precision eq '' ) {
+    $cursorDecimalPlaces = -1;
+  }
+  else {
+    if (isNumeric($precision)) { # parameter on the card is numeric
+      $cursorDecimalPlaces = int($precision);
+    }
+    else {
+      displayError ("Precision $precision is not numeric on the supplied )DECIMALPLACES control card");
+    }
+  }
+
+  displayDebug("cursorDecimalPlaces set to $cursorDecimalPlaces",0,$currentSubroutine);
+
+} # end of processDECIMALPLACES 
+
 sub processTRUNCZEROES {
   # -----------------------------------------------------------
   # Routine to set the truncatetrailingzeroes flag
   #
-  # Usage: )TRUNCZEROES
+  # Usage: )TRUNCZEROES [number of decimal places]
   # Returns: nothing, but sets the truncatetrailingzeroes flag
   # -----------------------------------------------------------
 
   my $currentSubroutine = 'processTRUNCZEROES'; 
+  my $card = shift;                                                         # establish the card being processed
+  my $precision = getToken($card);
   
   $truncateTrailingZeroes = 1;
+
+  if ( $precision ne '' ) {
+    if (isNumeric($precision)) { # parameter on the card is numeric
+      $cursorDecimalPlaces = int($precision);
+      displayDebug("cursorDecimalPlaces set to $cursorDecimalPlaces",0,$currentSubroutine);
+    }
+    else {
+      displayError ("Precision $precision is not numeric on the supplied )TRUNCZEROES control card");
+    }
+  }
+  
   displayDebug("truncateTrailingZeroes flag set",0,$currentSubroutine);
 
 } # end of processTRUNCZEROES
@@ -5761,7 +5926,7 @@ sub processSKELVERS {
   # -----------------------------------------------------------
   # Routine to process the SKELVERS statemnent. The format of the statement is:
   #
-  # )SKELVERS  $Id: processSkeleton.pm,v 1.55 2016/07/14 04:01:03 db2admin Exp db2admin $
+  # )SKELVERS  $Id: processSkeleton.pm,v 1.65 2018/01/04 00:49:12 db2admin Exp db2admin $
   #
   # Usage: processVERSION(<control card>)
   # Returns: sets the internal variable skelVers
@@ -5962,7 +6127,23 @@ sub processControlCard {
   my $currentSubroutine = 'processControlCard'; 
 
   my $card = shift; # get the line to process - will be $skelLines[$skelArray{$currentActiveSkel}][$currentLinePosition]
- 
+
+  # check to see if the control card is a )FUNC statement so that the variable can be saved
+  $currentVariable = '';
+  $currentLinePosition = 0;
+  if ( uc(getToken($card)) eq ')FUNC' ) { # the statement is a )FUNC statement 
+    # this processing needs to be done here before any variable substitution
+    if ( $card !~ /=/ ) { # doesn't contain an = sign
+      my $a = getToken($card); # get the function name
+      if ( " FORMATSQL GDATE JDATE " !~ $a ) { # the function isn't one of FormatSQL, GDate or JDate
+        $a = getToken($card); # get the first parameter (this will be the name of the variable to be updated (with the colon)
+        if ( $a =~ /^\:/ ) { # ensure first character is a colon
+          $currentVariable = substr($a, 1); # lose the first character (which will be a :)
+        }
+      }
+    }
+  }
+     
   displayDebug("Control Card Processing Started - $card",2,$currentSubroutine);
   $card = substituteVariables($card); 
   displayDebug(">>> Card after substitution: $card",1,$currentSubroutine);
@@ -6047,6 +6228,9 @@ sub processControlCard {
   elsif ( $skelCardType eq ")TRACE" ) {    # TRACE Control Card - set a trace level for ProcessSkeleton
     processTRACE($card);
   }
+  elsif ( $skelCardType eq ")DECIMALPLACES" ) {    # DECIMALPLACES Control Card - set the number of decimal places to display for cursor variables
+    processDECIMALPLACES($card);
+  }
   elsif ( $skelCardType eq ")TRUNCZEROES" ) {    # TRUNCZEROES Control Card - set the truncateTrailingZeroes flag
     processTRUNCZEROES($card);
   }
@@ -6098,6 +6282,9 @@ sub processControlCard {
   elsif ( ($skelCardType eq ")GRAPHOPT") ) {    # GRAPHOPT Control Card - Print out a graph 
     processGRAPHOPT($card);
   }
+  elsif ( ($skelCardType eq ")GRAPHLABEL") ) {    # GRAPHLABEL Control Card - Establish a label definition
+    processGRAPHLABEL($card);
+  }
   elsif ( ($skelCardType eq ")GRAPHSTART") ) {    # GRAPHSTART Control Card - Print out the start of a GRAPH section
     processGRAPHSTART($card);
   }
@@ -6142,14 +6329,24 @@ sub processFUNC {
   my $currentSubroutine = 'processFUNC'; 
   
   my $card = shift; # get the line to process - will be $skelLines[$skelArray{$currentActiveSkel}][$currentLinePosition]
+  
+  my $varName;   # name of the variable to update
+  my $varOp;     # should be = if it is an assignment 
 
   if ( ( $skelSelSkipCards eq "No" ) && ( $skelDOTSkipCards eq "No" ) ) { # not skipping cards
     my $funcName = getToken($card);                      # function name
-    my $varName = getToken($card);                       # variable name
-    my $varOp = getToken($card);                         # should be =
+    
+    if ( $currentVariable ne '' ) {    # there is no equals and the first character of the first parm is a :
+      $varName = $currentVariable;     # set the variable to update
+      $varOp = '=';
+    }
+    else {
+      $varName = getToken($card);      # variable name
+      $varOp = getToken($card);        # should be =
+    }
       
     if ( $varOp ne "=" ) { # assignment must be =
-      displayError("Operator for )FUNC must must be '='. Operator found was $varOp",$currentSubroutine);
+      displayError("Operator for )FUNC $funcName  must must be '='. Operator found was $varOp",$currentSubroutine);
       return;
     }
     my $varValue = '';
@@ -6189,6 +6386,9 @@ sub processFunction {
   #                        spaces within a string will be preserved
   #     FORMATSQL        - return formatted SQL
   #     PAD              - Pad a string with characters
+  #     REPL             - REPLACE a string with another string
+  #                        )FUNC REPL RET = <string to search> <string to be replaced> <String to replace with>
+  #     WEBSAFE          - Returns a string with all special characters converted to HTML equivalents
   #     
   # Usage: processFunction(<Function>,<Parameters>)
   # Returns: the result of the function applied to the parameters
@@ -6382,7 +6582,7 @@ sub processFunction {
   }
   elsif ( uc($function) eq "FORMATSQL") { # format the supplied string as SQL
     $funcParm = trim($funcParm);
-    if ( uc($funcParm) =~ "^FILE\:|^SQL\:" ) {                    # does the sql start with either SQL: or FILE:
+    if ( uc($funcParm) =~ "^FILE\:|^SQL\:|^FILE\=|^SQL\=" ) {                    # does the sql start with either SQL: or FILE: or SQL= or FILE=
       $funcParm = loadSQL(trim(substr($funcParm,$+[0])) , $currentSubroutine);             # load the SQL
     }
     return formatSQL($funcParm);
@@ -6497,6 +6697,46 @@ sub processFunction {
     return "$returned[4] $returned[0]$returned[3], $returned[2]"; # return the date as calculated from BASEDATE and NUMDAYS in the format "March 12th, 2015"
     
   } # end of JDATE function
+  elsif ( uc($function) eq "REPL" ) {                       # REPL function
+    my $baseString = getToken($card);                       # string to be searched
+    my $srchString = getToken($card);                       # String to be searched for
+    my $replString = getToken($card);                       # Replacement String
+
+    if ( $srchString eq '') {                               # second parameter not supplied
+      displayError("REPL function format is:\n)FUNC REPL xxx = <string> <search string> <replacement string>\nNote: Function will remove string if replacement string not provided",$currentSubroutine);
+      return $baseString;
+    }
+
+    displayDebug("baseString=$baseString, srchString=$srchString, replString=$replString", 2, $currentSubroutine);
+
+    $baseString =~ s/$srchString/$replString/g; # do the replacement
+    return $baseString;                         # 
+
+  } # end of REPL function
+  elsif ( uc($function) eq "WEBSAFE" ) {                    # REPL function
+    my $baseString = getToken($card);                       # string to be converted
+
+    displayDebug("baseString=$baseString", 2, $currentSubroutine);
+
+    $baseString =~ s/\%/%25/g; # do the percent sign replacement - MUST be done first 
+    $baseString =~ s/\ /%20/g; # do the space replacement
+    $baseString =~ s/\!/%21/g; # do the exclamation replacement
+    $baseString =~ s/\"/%22/g; # do the double quotes replacement
+    $baseString =~ s/\#/%23/g; # do the number sign replacement
+    $baseString =~ s/\$/%24/g; # do the dollar sign replacement
+    $baseString =~ s/\&/%26/g; # do the ampersand replacement
+    $baseString =~ s/\'/%27/g; # do the single quote replacement
+    $baseString =~ s/\(/%28/g; # do the opening parenthesis replacement
+    $baseString =~ s/\)/%29/g; # do the closing parenthesis replacement
+    $baseString =~ s/\*/%2A/g; # do the asterisk replacement
+    $baseString =~ s/\+/%2B/g; # do the plus sign replacement
+    $baseString =~ s/\,/%2C/g; # do the comma replacement
+    $baseString =~ s/\-/%2D/g; # do the minus sign replacement
+    $baseString =~ s/\./%2E/g; # do the period replacement
+    $baseString =~ s/\//%2F/g; # do the slash replacement
+    return $baseString;                         # 
+
+  } # end of WEBSAFE function
 
   displayError("Function $function unknown. Known functions are:\n     INT, TRIM, LTRIM, RTRIM, LEN, INSTR, LEFT, RIGHT, MID, REMOVECRLF, REMOVEWHITESPACE, FORMATSQL,\n     GDATE, JDATE, PAD\nFunction will return nothing",$currentSubroutine);
   return "";
@@ -7095,4 +7335,5 @@ sub processSkeleton {
 } # end of processSkeleton
 
 1;
+
 
