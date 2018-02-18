@@ -2,7 +2,7 @@
 # --------------------------------------------------------------------
 # commonFunctions.pm
 #
-# $Id: commonFunctions.pm,v 1.22 2017/12/06 21:42:53 db2admin Exp db2admin $
+# $Id: commonFunctions.pm,v 1.26 2018/02/13 23:50:16 db2admin Exp db2admin $
 #
 # Description:
 # Package cotaining common code.
@@ -169,6 +169,15 @@
 #
 # ChangeLog:
 # $Log: commonFunctions.pm,v $
+# Revision 1.26  2018/02/13 23:50:16  db2admin
+# ensure that parameters to timeAdj and displayMinutes are integers
+#
+# Revision 1.25  2018/02/13 23:28:38  db2admin
+# replace with working version from another machine
+#
+# Revision 1.23  2018/02/13 23:13:44  db2admin
+# correct issue of non whole hours beingreturned from displayMinutes when less than 1 day run time
+#
 # Revision 1.22  2017/12/06 21:42:53  db2admin
 # add in timeAdj function
 #
@@ -326,6 +335,7 @@ BEGIN {
 sub displayMinutes {
 
   my $elapsed = shift;
+  $elapsed = int($elapsed); # make sure that the number of minutes is an integer
   my $currentRoutine = 'displayMinutes';
 
   if ( $datecalc_debugLevel > 1 ) { printDebug( "Total mins: $elapsed", $currentRoutine); }
@@ -334,12 +344,12 @@ sub displayMinutes {
 
   if ( $elapsed < 1440 ) { # under one day so just return hours and minutes
     my $mins = $elapsed % 60;
-    my $hours = ($elapsed - $mins)/60;
+    my $hours = int(($elapsed - $mins) / 60);
     return "$hours hour" . literalPlural($hours) . " $mins minute" . literalPlural($mins);
   }
 
   my $mins = $elapsed % 60;
-  my $totalHours = ($elapsed - $mins)/60;
+  my $totalHours = ($elapsed - $mins) / 60;
   my $hours = $totalHours % 24;
   my $days = ($elapsed - (60 * $hours) - $mins)/1440;
   return "$days day" . literalPlural($days) . " $hours hour" . literalPlural($hours) . " $mins minute" . literalPlural($mins);
@@ -383,12 +393,14 @@ sub printDebug {
 #
 #           timeAdj takes the same parameters but allows a negative value for 
 #           the adjustment minutes
+# 
+#           also timeAdd always returns 00 seconds
 #
 # usage:    timeAdd('2016.09.19 08:05:01','15')
 #           the parameters are:
 #               1. timestamp in the format yyyy.mm.dd hh:mm:ss
 #               2. elapsed time in minutes
-# returns:  '2016.09.19 08:20:01'  
+# returns:  '2016.09.19 08:20:00'  
 #
 # -----------------------------------------------------------------
 
@@ -439,6 +451,7 @@ sub timeAdj {
   my $currentRoutine = 'timeAdj';
   my $startTime = shift;
   my $elapsed = shift;
+  $elapsed = int($elapsed); # ensure that the elapsed time is an integer
   my ($year, $mon, $day, $hr, $min, $sec) = ( $startTime =~ /(\d\d\d\d).(\d\d).(\d\d) (\d\d).(\d\d).(\d\d)/ );
 
   if ( $datecalc_debugLevel > 0 ) { printDebug( "Timestamp: $startTime (year: $year, month: $mon, day: $day, hour: $hr, min: $min, secs: $sec). Elapsed: $elapsed", $currentRoutine); }
@@ -538,7 +551,7 @@ sub timeDiff {
 
 sub commonVersion {
 
-  my $ID = '$Id: commonFunctions.pm,v 1.22 2017/12/06 21:42:53 db2admin Exp db2admin $';
+  my $ID = '$Id: commonFunctions.pm,v 1.26 2018/02/13 23:50:16 db2admin Exp db2admin $';
   my @V = split(/ /,$ID);
   my $nameStr=$V[1];
   (my $name,my $x) = split(",",$nameStr);
