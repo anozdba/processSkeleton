@@ -2,7 +2,7 @@
 # --------------------------------------------------------------------
 # commonFunctions.pm
 #
-# $Id: commonFunctions.pm,v 1.26 2018/02/13 23:50:16 db2admin Exp db2admin $
+# $Id: commonFunctions.pm,v 1.28 2018/04/03 06:14:13 db2admin Exp db2admin $
 #
 # Description:
 # Package cotaining common code.
@@ -169,6 +169,14 @@
 #
 # ChangeLog:
 # $Log: commonFunctions.pm,v $
+# Revision 1.28  2018/04/03 06:14:13  db2admin
+# adjust getOpt routine to enforce hyphen identification of parameter names where specified
+# .
+#
+# Revision 1.27  2018/03/21 05:27:32  db2admin
+# Correct bug in processing of extended parameters (starting with --)
+# Allow partial entry of parameter names for extended parameters
+#
 # Revision 1.26  2018/02/13 23:50:16  db2admin
 # ensure that parameters to timeAdj and displayMinutes are integers
 #
@@ -254,7 +262,7 @@ use strict;
 # export parameters ....
 require Exporter;
 our @ISA = qw(Exporter);
-our @EXPORT_OK = qw(trim ltrim rtrim commonVersion getOpt myDate $getOpt_web $getOpt_optName $getOpt_optValue getOpt_form @myDate_ReturnDesc $myDate_debugLevel $getOpt_diagLevel $getOpt_calledBy $parmSeparators processDirectory $maxDepth $fileCnt $dirCnt localDateTime $datecalc_debugLevel displayMinutes timeDiff timeAdd timeAdj convertToTimestamp);
+our @EXPORT_OK = qw(trim ltrim rtrim commonVersion getOpt myDate $getOpt_web $getOpt_optName $getOpt_min_match $getOpt_optValue getOpt_form @myDate_ReturnDesc $myDate_debugLevel $getOpt_diagLevel $getOpt_calledBy $parmSeparators processDirectory $maxDepth $fileCnt $dirCnt localDateTime $datecalc_debugLevel displayMinutes timeDiff timeAdd timeAdj convertToTimestamp);
 
 # persistent variables
 
@@ -273,6 +281,7 @@ our $getOpt_optValue;        # contains the value of the option currently being 
 our $getOpt_web;             # indicates that the result is for the web
 our $getOpt_calledBy;        # indicates the routine calling the module
 our $getOpt_diagLevel;       # debug level in getopt
+our $getOpt_min_match = 2;   # minimum number of characters required for a parameter match (-1 => whole parameter equal)
 our $datecalc_debugLevel;    # debug level for date calculation routines
 our $parmSeparators = ' &';  # string contains characters to be used as separators in getOpt_form
 my @monthName;
@@ -280,6 +289,10 @@ my %monthNumber;
 my @monthDays;
 our @myDate_ReturnDesc = ('Day of Month', 'Month', 'Year', 'Day Suffix', 'Month Name', 'Number of days since Base Date','Base Date', 'EOM','EOY','EOFY','BOM','Day of Week','Message');
 our $myDate_debugLevel ;
+my %getOpt_valid_parms;
+my $search_valid_parms = '';
+my %getOpt_caseinsens;   # 0 => case sensitive, 1 => case insensitive
+my %getOpt_requiresDash;
 
 BEGIN {
   $getOpt_prm = 0;
@@ -551,7 +564,7 @@ sub timeDiff {
 
 sub commonVersion {
 
-  my $ID = '$Id: commonFunctions.pm,v 1.26 2018/02/13 23:50:16 db2admin Exp db2admin $';
+  my $ID = '$Id: commonFunctions.pm,v 1.28 2018/04/03 06:14:13 db2admin Exp db2admin $';
   my @V = split(/ /,$ID);
   my $nameStr=$V[1];
   (my $name,my $x) = split(",",$nameStr);
@@ -563,7 +576,81 @@ sub commonVersion {
 }
 
 # -----------------------------------------------------------------
+# setParameterIfNecessary - set the parameter if necessary and
+# otherwise just sets it to space
+# -----------------------------------------------------------------
+
+sub setParameterIfNecessary {
+  
+  my $getOpt_prmName = shift;
+  my $webParmSet = shift;
+  my $origName = shift;    # if it was a partial match then this was the original parameter name
+
+  if ( $getOpt_valid_parms{$getOpt_prmName} eq ":" ) {     # is a parameter required?
+    if ( $webParmSet ne "" ) {                              # getOpt_web set and a parm has already been found
+      $getOpt_optName = $getOpt_prmName;                   # set the returned option name
+      $getOpt_optValue = $webParmSet;                       # set the returned parameter
+      $getOpt_prm_flag = "Y";
+    }
+    else { # normal space delimited parameters
+      $getOpt_optName = $getOpt_prmName;                     # set the option name
+      if ( defined($PARGV[$getOpt_prm+1] ) ) {                # there is another parm
+        if ( substr($PARGV[$getOpt_prm+1],0,1) eq "-" ) {     # check to see if it is another parameter
+          $getOpt_optValue = $getOpt_prmName;                # Pass back the option name as the parameter (value)
+          $getOpt_optName = ":";                              # name set to : to indicate error
+          $getOpt_prm_flag = "Y";
+        }
+        else { # we have a winner
+          $getOpt_optValue = $PARGV[$getOpt_prm+1];           # set the returned parameter
+          $getOpt_prm_flag = "Y";
+          $getOpt_prm++;
+        }
+      }
+      else { # parm was required and there are no more parms!
+        $getOpt_optValue = $getOpt_prmName;                  # Pass back the option name as the parameter
+        $getOpt_optName = ":";                                # name set to : to indicate error
+        $getOpt_prm_flag = "Y";
+      }
+    }
+  }
+  else { # Parameter is not required
+    $getOpt_optValue = "";
+    $getOpt_optName = $getOpt_prmName;
+    $getOpt_prm_flag = "Y";
+  }
+  
+  return;
+
+} # end of setParameterIfNecessary
+
+# -----------------------------------------------------------------
 # getOpt - function to manage the processing of passed parameters
+#
+# Parameters are of the form 'ab[c]b[c]..[|[d][e]f[c]|[d][e]f[c]....]
+#     where a - character to indicate parms are required (normally :)
+#           b - option (single character)
+#           c - (optional) indicator for parameters (will be the same as parm a). 
+#               If there it indicates that option has parameters
+#           d - (optional) indicator for multi character option: '--'
+#           e - (optional) if ^ indicates that the option is case insensitive
+#           f - (optional) long option name
+#
+#  so an example could be: ':h?d:|--database:|^db: and that would allow parameters like:
+#                 test.pl -d testdb
+#                 test.pl --database testdb
+#                 test.pl dB testdb
+#
+# NOTE: All single character parameters are case sensitive
+#       On the command line:
+#           All parameters defined in the single character section must be preceded by '-'
+#           All parameters defined in the multi character section must be preceded by either '--' or nothing
+#
+# Returns: $getOpt_optName : Parameter name if all ok
+#                            : if parameter name was ok but required parameter not supplied
+#                            * if parameter name was not defined
+#          $getopt_optValue: Parameter value if parameter required a parameter
+#                            Blank if no parameter required
+#                            Parameter name/value if $getOpt_optName set to : or *
 # -----------------------------------------------------------------
 
 sub getOpt {
@@ -571,6 +658,7 @@ sub getOpt {
   my $case_insens = "";
   my $getOpt_parmInd = ":";
   my $webParmSet = "";   # initially set no web parm
+  my $extendedParameter = 0; # initially parameter is assumed not to be extended
 
 #  our $getOpt_web;
   if ( ! defined($getOpt_calledBy) ) { 
@@ -585,8 +673,6 @@ sub getOpt {
      $getOpt_prm = 0;
   }
 
-  my $getOpt_numKeyWords=-1;
-  my $getOpt_numNonKeyWords=-1;
   my $QUERY_STRING = $ENV{'QUERY_STRING'};
 
   if ( ($#_ < 0) && ($QUERY_STRING eq '') ) {
@@ -602,15 +688,8 @@ sub getOpt {
   my @getOpt_OptArr;
   my $getOpt_tmpKW;
   my $getOpt_KWLen;
-  my @getOpt_valid_parms;
-  my %getOpt_valid_parms;
-  my @getOpt_caseinsens;
-  my %getOpt_caseinsens;
-  my @KeyWords; 
-  my %KeyWords;
-  my $getOpt_silent;
   my $getOpt_prmChar;
-  my $getOpt_prmValue;
+  my $getOpt_prmName;
   my @webparm;   # used to split parameters by '=' for web use
   my $getOpt_schar;
 
@@ -710,56 +789,70 @@ sub getOpt {
   #                 test.pl --database testdb
   #                 test.pl dB testdb
 
-  @getOpt_OptArr = split(/\|/,$_[0]);  # $_[0] is the single character parameters - split by |
-  # Gather the 2nd and subsequent parameters
-  $getOpt_parmInd = substr($getOpt_OptArr[0],0,1); # establish the parm indicator character
-  for ($i=1 ; $i <= $#getOpt_OptArr ; $i++ ) { # Process the  multi character options
-    if ( substr($getOpt_OptArr[$i],0, 2) eq "--" ) {   # If it is an extended parameter
-      if ( substr($getOpt_OptArr[$i],2, 1) eq "^" ) {  # If it is flagged case insensitive
-        $getOpt_tmpKW = uc(substr($getOpt_OptArr[$i],3));
-        $case_insens = "^";
+  if (! defined($getOpt_valid_parms{'###'}) ) { # Check if the parm definitions have been read in
+    $getOpt_valid_parms{'###'} = "Processed Extended Parms";            # flag that we have processed the parms on the first call in
+    @getOpt_OptArr = split(/\|/,$_[0]);  # $_[0] is the single character parameters - split by |
+    # Gather the 2nd and subsequent parameters
+    $getOpt_parmInd = substr($getOpt_OptArr[0],0,1); # establish the parm indicator character
+    for ($i=1 ; $i <= $#getOpt_OptArr ; $i++ ) { # Process the  multi character options (skip the first parameter for later processing)
+      if ( substr($getOpt_OptArr[$i],0, 2) eq "--" ) {   # it is an extended parameter
+        if ( substr($getOpt_OptArr[$i],2, 1) eq "^" ) {  # it is flagged case insensitive (first char is ^)
+          $getOpt_tmpKW = uc(substr($getOpt_OptArr[$i],3));
+          $case_insens = 1;
+        }
+        else { # it is not case insensitive
+          $getOpt_tmpKW = substr($getOpt_OptArr[$i],2);
+          $case_insens = 0;
+        }
+        $getOpt_KWLen = length($getOpt_tmpKW);
+        if ( substr($getOpt_tmpKW,$getOpt_KWLen-1,1) eq $getOpt_parmInd ) { # it requires a parameter (last char is the parameter indicator)
+          $getOpt_tmpKW = substr($getOpt_tmpKW,0,$getOpt_KWLen-1);          # get rid of the indicator
+          $getOpt_valid_parms{$getOpt_tmpKW} = ":";                         # non blank indicates it requires a parameter
+        }
+        else { # it doesn't require a parameter
+          $getOpt_valid_parms{$getOpt_tmpKW} = "";                          # flag it as case sensitive
+        }
+        $getOpt_caseinsens{$getOpt_tmpKW} = $case_insens;
+        # only bother to set the flag if it hasn't already been set
+        if (! defined($getOpt_requiresDash{$getOpt_tmpKW}) ) {  $getOpt_requiresDash{$getOpt_tmpKW} = 1; } # 
       }
-      else { # it is not case insensitive
-        $getOpt_tmpKW = substr($getOpt_OptArr[$i],2);
-        $case_insens = " ";
+      else { # process it as a keyword 
+        $getOpt_tmpKW = $getOpt_OptArr[$i];
+        # set up values for supplied parameter (or not)
+        if ( substr($getOpt_OptArr[$i],-1,1) eq $getOpt_parmInd ) { # indicator set for provided parameter so alter the parameter name
+          $getOpt_KWLen = length($getOpt_tmpKW);
+          $getOpt_tmpKW = substr($getOpt_tmpKW,0,$getOpt_KWLen-1);          # get rid of the indicator
+          $getOpt_valid_parms{$getOpt_tmpKW} = ':';
+        }
+        else {
+          $getOpt_valid_parms{$getOpt_tmpKW} = ' ';
+        }
+        
+        if ( substr($getOpt_OptArr[$i],0, 1) eq "^" ) {     # it is case insensitive 
+          $getOpt_tmpKW = uc(substr($getOpt_OptArr[$i],1)); # parameter starts after 1st char
+          $getOpt_caseinsens{$getOpt_tmpKW} = 1;          # flag it as case insensitive
+        }
+        else {
+          $getOpt_caseinsens{$getOpt_tmpKW} = 0;
+        }
       }
-      $getOpt_KWLen = length($getOpt_tmpKW);
-      if ( substr($getOpt_tmpKW,$getOpt_KWLen-1,1) eq $getOpt_parmInd ) { # it requires a parameter
-        $getOpt_tmpKW = substr($getOpt_tmpKW,0,$getOpt_KWLen-1);          # get rid of the indicator
-        $getOpt_valid_parms{$getOpt_tmpKW} = ":";                         # non blank indicates it requires a parameter
-      }
-      else { # it doesn't require a parameter
-        $getOpt_valid_parms{$getOpt_tmpKW} = "";                          # flag it as case sensitive
-      }
-      $getOpt_caseinsens{$getOpt_tmpKW} = $case_insens;
-    }
-    else { # process it as a keyword
-      $getOpt_numKeyWords++;
-      $getOpt_KWLen = length($getOpt_OptArr[$i]);
-      if ( substr($getOpt_OptArr[$i],0, 1) eq "^" ) { # first char may be flag for case insensitive
-        $getOpt_tmpKW = substr($getOpt_OptArr[$i],1); # parameter starts after 1st char
-        $KeyWords{$getOpt_tmpKW} = "^";               # mark it as case insensitive
-      }
-      else {
-        $KeyWords{$getOpt_OptArr[$i]} = "";           # mark it as case sensitive
-      }
+      $getOpt_requiresDash{$getOpt_tmpKW} = 0;
+      $search_valid_parms .= " $getOpt_tmpKW ";
     }
   }
-
+  
   # Process the 1st parameter separately ....
   $getOpt_schar = 0;
   if (! defined($getOpt_valid_parms{'####'}) ) { # Has this parm already been processed?
-    $getOpt_valid_parms{'####'} = "";            # flag that we have processed the parms
-    $getOpt_silent="N";
-    if ( substr($getOpt_OptArr[0],0,1) eq ":" ) {   # getOpt_silent does nothing as yet
-      $getOpt_silent="Y";
-      $getOpt_schar++;
-    }
+    $getOpt_valid_parms{'####'} = "Processed First Parm";            # flag that we have processed the parms on the first call in
+    $getOpt_schar++;          # skip the first character as it is the parameter indicator
     # now process each of the character options .....
     while ( $getOpt_schar <= length($getOpt_OptArr[0])-1 ) {
       $getOpt_prmChar = substr($getOpt_OptArr[0],$getOpt_schar,1);   # set option
       $getOpt_valid_parms{$getOpt_prmChar} = "";                     # set it up as a valid option without parm
-      $getOpt_caseinsens{$getOpt_prmChar} = "";                      # set it up as case sensitive (note all single char options are case sensitive)
+      $getOpt_caseinsens{$getOpt_prmChar} = 0;                       # set it up as case sensitive (note all single char options are case sensitive)
+      # only bother to set the requiresDash flag if it hasn't already been set
+      if (! defined($getOpt_requiresDash{$getOpt_prmChar}) ) {  $getOpt_requiresDash{$getOpt_prmChar} = 1; } # 
       $getOpt_schar++;
       if ( $getOpt_schar <= length($getOpt_OptArr[0])-1 ) { # if still more chars check if it is a flag       
         if ( substr($getOpt_OptArr[0],$getOpt_schar,1) eq $getOpt_parmInd ) { # Flagged as requiring parameters
@@ -797,97 +890,121 @@ sub getOpt {
   }
 
   # Now start processing the actual parameters
+  
+  my $parmDashInd = 0;                                              # indicates that the parameter is preceded by a dash (preceeded by - or --)
+  my $parmDashes = '';
 
   while ($getOpt_prm_flag ne "Y") {                                 # We are still looking
-    if ( defined($PARGV[$getOpt_prm]) ) {                           # if something exists
-      if ( substr($PARGV[$getOpt_prm],0,1) eq "-") {                # if it is a parameter (ie starts with a dash)
-        $getOpt_prmValue = trim(substr("$PARGV[$getOpt_prm]  ",1)); # remove the first character
-        if ( substr($getOpt_prmValue,0,1) eq "-" ) {                # if it is an extended parameter ....
-          $getOpt_prmValue = trim(substr("$getOpt_prmValue  ",1));  # remove the first char again
-        }
-        # and now it gets interesting ......
-        # If we are in HTML-land (ie $getOpt_web is "Y" ) then we can also also have parameters of
-        # the form -p=A -d=database so a single entry may actually contain the option and
-        # the parameter
-
-        if ( $getOpt_web eq "Y" ) {                      # must cope with web parameter format as well
-          if ( index($getOpt_prmValue,'=') > -1 ) {      # the parm contains an = sign
-            @webparm  = split('=',$getOpt_prmValue);     # split it on the = sign
-            if ( $getOpt_diagLevel > 0 ) {
-              print "web initial: $getOpt_prmValue<BR>\n";
-              print "web option: $webparm[0] parm: $webparm[1]<BR>\n";
-            }
-            $getOpt_prmValue = $webparm[0];              # establish a new parameter value
-            $webParmSet = $webparm[1];                   # set the parameter value
-          }
-        }
-
-        if ( (defined($getOpt_valid_parms{$getOpt_prmValue} ) )  ||
-             ( (defined($getOpt_valid_parms{uc($getOpt_prmValue)} )) && ($getOpt_caseinsens{uc($getOpt_prmValue)} eq "^") )
-           ) {                                                      # is it a valid parameter?
-          if ($getOpt_caseinsens{uc($getOpt_prmValue)} eq "^" ) {
-            $getOpt_prmValue = uc($getOpt_prmValue);                # if it is case insensitive then make the option upper case
-          }
-          if ( $getOpt_valid_parms{$getOpt_prmValue} eq ":" ) {     # is a parameter required?
-            if ( $webParmSet ne "" ) {                              # getOpt_web set and a parm has already been found
-              $getOpt_optName = $getOpt_prmValue;                   # set the returned option name
-              $getOpt_optValue = $webParmSet;                       # set the returned parameter
-              $getOpt_prm_flag = "Y";
-            }
-            else { # normal space delimited parameters
-              $getOpt_optName = $getOpt_prmValue;                     # set the option name
-              if ( defined($PARGV[$getOpt_prm+1] ) ) {
-                if ( substr($PARGV[$getOpt_prm+1],0,1) eq "-" ) {     # check to see if it is another parameter
-                  $getOpt_optValue = $getOpt_prmValue;                # Pass back the option name as the parameter 
-                  $getOpt_optName = ":";                              # name set to : to indicate error
-                  $getOpt_prm_flag = "Y";
-                }
-                else { # we have a winner
-                  $getOpt_optValue = $PARGV[$getOpt_prm+1];           # set the returned parameter
-                  $getOpt_prm_flag = "Y";
-                  $getOpt_prm++;
-                }
-              }
-              else { # parm was required and there are no more parms!
-                $getOpt_optValue = $getOpt_prmValue;                  # Pass back the option name as the parameter
-                $getOpt_optName = ":";                                # name set to : to indicate error
-                $getOpt_prm_flag = "Y";
-              }
-            }
-          }
-          else { # Parameter is not required
-            $getOpt_optValue = "";
-            $getOpt_optName = $getOpt_prmValue;
-            $getOpt_prm_flag = "Y";
-          }
-        }
-        else { # it is not a valid parameter (or at least it wasn't defined
-          $getOpt_optName = "*";
-          $getOpt_optValue = $getOpt_prmValue;
-          $getOpt_prm_flag = "Y";
+    $parmDashInd = 0;
+    if ( defined($PARGV[$getOpt_prm]) ) {                           # if a passed argument exists
+      $getOpt_prmName = trim($PARGV[$getOpt_prm]);                  # strip whitespace from the parameter
+      if ( substr($PARGV[$getOpt_prm],0,1) eq "-") {                # if it is a parameter (ie starts with a dash) then strip the leading -
+        $parmDashes = '-';                                          # remember it is 1 dash
+        $parmDashInd = 1;
+        $getOpt_prmName = trim(substr("$getOpt_prmName  ",1));      # remove the first character
+        if ( substr($getOpt_prmName,0,1) eq "-" ) {                 # if it is an extended parameter ....
+          $getOpt_prmName = trim(substr("$getOpt_prmName  ",1));    # remove the first char again
+          $extendedParameter = 1;                                   # flag that the parameter is extended
+          $parmDashes = '--';                                        # remember it is 2 dashes
         }
       }
-      else { # is it a keyword? (no leading -)
-        if ( defined( $KeyWords{$PARGV[$getOpt_prm]} ) ) { # it is a keyword and matches on case
-          $getOpt_optName = uc($PARGV[$getOpt_prm]);
-          $getOpt_optValue = $PARGV[$getOpt_prm];
-          $getOpt_prm_flag = "Y";
+
+      # and now it gets interesting ......
+      # If we are in HTML-land (ie $getOpt_web is "Y" ) then we can also also have parameters of
+      # the form -p=A -d=database so a single entry may actually contain the option and
+      # the parameter
+
+      if ( $getOpt_web eq "Y" ) {                      # must cope with web parameter format as well
+        if ( index($getOpt_prmName,'=') > -1 ) {      # the parm contains an = sign
+          @webparm  = split('=',$getOpt_prmName);     # split it on the = sign
+          if ( $getOpt_diagLevel > 0 ) {
+            print "web initial: $getOpt_prmName<BR>\n";
+            print "web option: $webparm[0] parm: $webparm[1]<BR>\n";
+          }
+          $getOpt_prmName = $webparm[0];              # establish a new parameter value
+          $webParmSet = $webparm[1];                   # set the parameter value
         }
-        elsif ( defined( $KeyWords{uc($PARGV[$getOpt_prm])} ) ) { # it is a keyword and matches on upper case
-          if ( $KeyWords{uc($PARGV[$getOpt_prm])} eq "^" ) { # case insensitive so all ok ....
-            $getOpt_optName = uc($PARGV[$getOpt_prm]);
-            $getOpt_optValue = $PARGV[$getOpt_prm];
+      }
+      
+      # construct the name to check against
+      my $testParmName = $getOpt_prmName;
+      if ( $getOpt_caseinsens{uc($getOpt_prmName)} ) { $testParmName = uc($getOpt_prmName); }
+
+      if ( ( defined($getOpt_valid_parms{$testParmName} ) ) )  {  # is it a valid parameter? defined = yes
+        if ( $getOpt_requiresDash{$testParmName} ) {              # check to see if the parm required a dash (and if it had one)
+          if ( $parmDashInd ) {                                   # dash required and found so it is a paramter name
+            $getOpt_prmName = $testParmName;                       # if it is case insensitive then make the option upper case
+            setParameterIfNecessary($getOpt_prmName, $webParmSet, "");
+          }
+          else {                                                  # no dash so not a parameter name 
+            $getOpt_optName = '*';                                # flag the fact that name isn't known
+            $getOpt_optValue = $parmDashes . $testParmName;
             $getOpt_prm_flag = "Y";
           }
-          else { # must match on case
+        }
+        else {
+          if ( $getOpt_caseinsens{uc($getOpt_prmName)} ) {
+            $getOpt_prmName = uc($getOpt_prmName);                # if it is case insensitive then make the option upper case
+          }
+          setParameterIfNecessary($getOpt_prmName, $webParmSet, "");
+        }
+      }
+      else { # it is not a valid parameter (or at least it wasn't defined)
+        if ( $extendedParameter || ( length($getOpt_prmName) > 1) ) { # if it is an extended parameter (starts with -- or > 1 character in length) then a partial match may be valid
+          if ( $getOpt_min_match == -1 ) { # match must be for whole parameter so it has failed
             $getOpt_optName = "*";
-            $getOpt_optValue = $PARGV[$getOpt_prm];
+            $getOpt_optValue = $parmDashes . $getOpt_prmName;
             $getOpt_prm_flag = "Y";
           }
+          else { # try progressive testing if the string is above or equal to the min match limit
+            if ( length($getOpt_prmName) >= $getOpt_min_match ) { # big enough to try and match
+              # first try case sensitive
+              my $tmpIndex = index($search_valid_parms," " . $getOpt_prmName); # check to see if we can find the restricted parm name in the table
+              my $tmpIndex2 = -1;     # this will hold the char position ofthe end ofthe parameter name
+              my $tmpParmName = '';   # will hold the trial parameter name
+              if ( $tmpIndex > -1 ) { # the string was found (so set up variables and exit loop)
+                $tmpIndex2 = index($search_valid_parms," ", $tmpIndex+1); # search for the next space past the found string
+                my $tmpParmName = substr($search_valid_parms, $tmpIndex+1, $tmpIndex2 - $tmpIndex - 1);
+                $getOpt_prm_flag = "Y";
+                $getOpt_optName = $tmpParmName;
+                # Decide if a parameter is needed and get it if possible
+                setParameterIfNecessary($tmpParmName, "", $getOpt_prmName);
+              }
+              else { # string not found so try case insensitive
+                $tmpIndex = index($search_valid_parms," " . uc($getOpt_prmName)); # check to see if we can find the restricted parm name in the table
+                if ( $tmpIndex > -1 ) { # the string was found , check if it is a case insensitve parameter
+                  $tmpIndex2 = index($search_valid_parms," ", $tmpIndex+1); # search for the next space past the found string
+                  my $tmpParmName = substr($search_valid_parms, $tmpIndex+1, $tmpIndex2 - $tmpIndex - 1);
+                  if ( $getOpt_caseinsens{$tmpParmName} ) { # the parameter is case insensitive so it is a match
+                    $tmpIndex2 = index($search_valid_parms," ", $tmpIndex+1); # search for the next space past the found string
+                    $getOpt_prm_flag = "Y";
+                    $getOpt_optName = $tmpParmName;
+                    # Decide if a parameter is needed and get it if possible
+                    setParameterIfNecessary($tmpParmName, "", $getOpt_prmName);
+                  }
+                  else { # it is not case sesitive so this isn't a match 
+                    $getOpt_optName = "*";
+                    $getOpt_optValue = $parmDashes . $getOpt_prmName;
+                    $getOpt_prm_flag = "Y";
+                  }
+                }
+                else { # string wasn't found 
+                  $getOpt_optName = "*";
+                  $getOpt_optValue = $parmDashes . $getOpt_prmName;
+                  $getOpt_prm_flag = "Y";
+                }
+              }
+            }
+            else { # extended parameter but shorter then the minimum match length so fail
+              $getOpt_optName = "*";
+              $getOpt_optValue = $parmDashes . $getOpt_prmName;
+              $getOpt_prm_flag = "Y";
+            }
+          }
         }
-        else { # no then just add treat it as an unknown parameter
+        else { # not extended parameter and not above minimum match limit
           $getOpt_optName = "*";
-          $getOpt_optValue = $PARGV[$getOpt_prm];
+          $getOpt_optValue = $parmDashes . $getOpt_prmName;
           $getOpt_prm_flag = "Y";
         }
       }
@@ -1575,3 +1692,5 @@ sub convertToTimestamp {
 }
 
 1;
+
+
