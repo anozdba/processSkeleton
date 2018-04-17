@@ -2,7 +2,7 @@
 # --------------------------------------------------------------------
 # calculator.pm
 #
-# $Id: calculator.pm,v 1.11 2018/01/10 00:18:12 db2admin Exp db2admin $
+# $Id: calculator.pm,v 1.13 2018/03/23 00:10:59 db2admin Exp db2admin $
 #
 # Description:
 # Package to evaluate a infix calculation string
@@ -17,6 +17,12 @@
 #
 # ChangeLog:
 # $Log: calculator.pm,v $
+# Revision 1.13  2018/03/23 00:10:59  db2admin
+# correct handling of multi character operators
+#
+# Revision 1.12  2018/01/11 20:25:20  db2admin
+# correct an issue with unary operators
+#
 # Revision 1.11  2018/01/10 00:18:12  db2admin
 # 1. Corrected function processing
 # 2. improved tests
@@ -215,7 +221,7 @@ sub calcVersion {
   # Returns: a string like .... "$name ($Version)  Last Changed on $Changed (UTC)"
   # --------------------------------------------------------------------"
 
-  my $ID = '$Id: calculator.pm,v 1.11 2018/01/10 00:18:12 db2admin Exp db2admin $';
+  my $ID = '$Id: calculator.pm,v 1.13 2018/03/23 00:10:59 db2admin Exp db2admin $';
 
   my @V = split(/ /,$ID);
   my $nameStr=$V[1];
@@ -350,6 +356,10 @@ sub getCalculateToken {
           # so at this stage the next 1 or 2 characters are an operator ....
           # an operator will terminate a token (unless it is an alpha token and the last token char was alpha too)
           if ( isNumeric($currChar) ) { last; }        # the last character processed was a number so it terminates the token
+          elsif ( (   isOperator($tTok) ) &&              # current token is an operator
+                  ( ! isAlphaOperator($tTok) ) )  {
+            # do nothing ...... it is a non alpha operator and may be multi character
+          }
           else {                                       # the last character was an alpha character
             # now we need to check to see if the next characters weren't alpha operators (in which case we dont class them as such)
             if ( (! isAlphaOperator(substr($tLine,$currentTokenPosition,1))) &&      # was not a single char alpha operator
@@ -955,4 +965,5 @@ sub evaluateInfix {
   return $val;
 } # end of evaluateInfix
 1;
+
 
