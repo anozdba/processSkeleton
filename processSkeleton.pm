@@ -2,7 +2,7 @@
 # --------------------------------------------------------------------
 # processSkeleton.pm
 #
-# $Id: processSkeleton.pm,v 1.74 2018/04/17 04:39:25 db2admin Exp db2admin $
+# $Id: processSkeleton.pm,v 1.80 2018/04/23 04:41:49 db2admin Exp db2admin $
 #
 # Description:
 # Script to process a skeleton
@@ -31,6 +31,33 @@
 # ChangeLog:
 #
 # $Log: processSkeleton.pm,v $
+# Revision 1.80  2018/04/23 04:41:49  db2admin
+# close cursor when finished with it in processCHECKFORROWS
+#
+# Revision 1.79  2018/04/23 03:58:35  db2admin
+# replace condition checking in )SEL and SELELSE with processing in processCondition
+# to ensure that it is consistent
+#
+# Revision 1.78  2018/04/23 01:36:28  db2admin
+# Made the following changes:
+# 1. corrected references to )OPEN - replaced with )LOGON
+# 2. implemented new statements -
+#      )SETLEFTJUSTTAB to set the left justification tab character
+#      )SETRIGHTJUSTTAB to set the right justification tab character
+# 3. implemented new ROW_EXISTS and NO_ROW_EXISTS functions (usable on )SEL, )SELELSE and )WHEN statements
+#    to check to see if any rows are returned for a provided SQL statement
+#
+# Revision 1.77  2018/04/22 00:30:16  db2admin
+# processCondition added but not linked to other code
+#
+# Revision 1.76  2018/04/19 23:29:20  db2admin
+# 1. Correct a number of spelling mistakes in the code comments
+# 2. Remove unused variable TMP_File
+# 3. Add in new command )DOSEL to populate variables based on a select statement
+#
+# Revision 1.75  2018/04/18 01:26:02  db2admin
+# allow the escaping of the : character to allow strings beginning with : to not be confused with variables
+#
 # Revision 1.74  2018/04/17 04:39:25  db2admin
 # Add in )WHEN command
 # Simplify displayDebug code to speed up the display and reduce checks
@@ -341,7 +368,7 @@ if (exists($ENV{'SKL_VIEWQUAL'}) ) { $skelViewQual = $ENV{'SKL_VIEWQUAL'}; }
 my $skelSID;
 if (exists($ENV{'ORACLE_SID'}) ) { $skelSID = $ENV{'ORACLE_SID'}; }
 my $skelTNS;
-if (exists($ENV{'TNS_ADMIN'}) ) { $skelTNS = $ENV{'SKL_TNS'}; }
+if (exists($ENV{'TNS_ADMIN'}) ) { $skelTNS = $ENV{'TNS_ADMIN'}; }
 my $skelUserID;
 if (exists($ENV{'SKL_USERID'}) ) { $skelUserID = $ENV{'SKL_USERID'}; }
 
@@ -367,6 +394,8 @@ my %weekDays = ( "MON", "Monday", "TUE", "Tuesday", "WED", "Wednesday", "THU", "
 my $truncateTrailingZeroes = 0;           # flag indicating if trailing zeroes should be removed from returned database values
 my $cursorDecimalPlaces = -1;             # Number of decimal places to retain after truncating zeroes
 my $currentVariable = '';                 # this holds the name of the variable to be assigned the return value from a )FUNC statement 
+my $leftJustTab = '!';                    # character to be used as left justified tab stop
+my $rightJustTab = '~';                   # character to be used as right justified tab stop
 
 # Database connection detail arrays ....
 
@@ -578,7 +607,7 @@ sub skelVersion {
   # -----------------------------------------------------------
 
   my $currentSubroutine = 'skelVersion'; 
-  my $ID = '$Id: processSkeleton.pm,v 1.74 2018/04/17 04:39:25 db2admin Exp db2admin $';
+  my $ID = '$Id: processSkeleton.pm,v 1.80 2018/04/23 04:41:49 db2admin Exp db2admin $';
   my @V = split(/ /,$ID);
   my $nameStr=$V[1];
   my @N = split(",",$nameStr);
@@ -1529,7 +1558,7 @@ sub outputLine {
 sub outputLineNT {
   # -----------------------------------------------------------
   # This routine is the main conduit for output from processSkeleton
-  # it is basically the same as outputLine byt with no tab replacemnent
+  # it is basically the same as outputLine but with no tab replacemnent
   #
   # Usage: outputLineNT('text');
   # Returns : nothing
@@ -1705,8 +1734,24 @@ sub substituteVariables {
       $i = index($inputString,':',$leftEdge);    # search for the next ':'
       $linePos = $i + 1;                         # skip to the next char
       $fieldStart = $i ;                         # establish the beginning of the field name (if no cursor ref is supplied)
-      displayDebug("(at start) \$i=$i",3,$currentSubroutine);
+      displayDebug("(at start) \$i=$i",1,$currentSubroutine);
 
+      # check if the : is preceded by a backslash (in which case it is NOT a variable)
+      if ( $i > 1 ) {                                # cant have a cursor ref it is less than 1
+        if ( substr($inputString,$i-1,1) eq '\\' ) { # the : is being escaped
+          displayDebug("Colon will not be treated as a variable as it is escaped \$linepos=$linePos, \$i: $i" . ",char=" . substr($inputString,$i-1,1),1,$currentSubroutine);
+          $convString .= substr($inputString, $leftEdge, $fieldStart - $leftEdge - 1) . ":";   # just move across the text from the end of the last field to just after the ':' character
+          $leftEdge = $linePos;                      # Reset the leftedge to be just after the ':' character just worked with
+          if ( index($inputString,':',$leftEdge) == -1 ) {                             # no more colons in the string
+            $linePos = -1;                                                             # set line position off    
+            $convString .= substr($inputString, $fieldStart+1);                        # copy across the remaining string bit
+            displayDebug("No more \: to process in input string",3,$currentSubroutine);
+            last;                                                                      # leave the while loop as nothing more to process
+          }
+          next;
+        }
+      }
+      
       # check if there is a cursor reference (defined as a '.' preceding the ':')
       if ( $i > 1 ) {                               # cant have a cursor ref it is less than 1
         if ( substr($inputString,$i-1,1) eq '.' ) { # there should be a cursor reference as we have a .: in the middle of the string 
@@ -1727,8 +1772,8 @@ sub substituteVariables {
           }
         }
       }
-      # $tRef now contains the name of the cursor
 
+      # $tRef now contains the name of the cursor
       displayDebug("Cursor is:$tRef, fieldStart=$fieldStart, \$i=$i",2,$currentSubroutine);
       # now identify the variable name we are looking for
       my $varName = "";
@@ -1918,7 +1963,7 @@ sub substituteVariables {
           $skelFieldValue = "$tRef\.\:$varName";
         }
       }
-          
+      
       # replace the variable into the line 
       displayDebug("++convString=$convString, inputString=$inputString, leftEdge=$leftEdge,fieldStart=$fieldStart,fieldEnd=$fieldEnd, substr=" . substr($inputString, $leftEdge, $fieldStart - $leftEdge) . ",skelFieldValue=>" . $skelFieldValue . "<",2,$currentSubroutine);
           
@@ -1969,8 +2014,8 @@ sub putInTabs {
   # Routine to convert ! characters to enough spaces to match tab marks
   # specified using a )TAB command
   #
-  # note a ! will space fill to the next tab stop
-  #      a ~ will get the next token and right justify it to the next tab stop
+  # note by default: a ! will space fill to the next tab stop
+  #                  a ~ will get the next token and right justify it to the next tab stop
   #
   # Usage: putInTabs(<string>)
   # Returns: a variable with tabs characters space filled to tab stops
@@ -1983,9 +2028,9 @@ sub putInTabs {
 
   if ( $#tabEntries > 0 ) {   # tabs have been defined
     displayDebug("Adjusting tabs",1,$currentSubroutine);
-    my $iPos = index($convString, '!') ;                    # check if a left justify tab stop in the string
-    my $jPos = index($convString, '~') ;                    # check if a right justify tab stop is in the string
-    displayDebug("! Pos: $iPos, ~ Pos: $jPos, Line: $convString",2,$currentSubroutine);
+    my $iPos = index($convString, $leftJustTab) ;                    # check if a left justify tab stop in the string
+    my $jPos = index($convString, $rightJustTab) ;                    # check if a right justify tab stop is in the string
+    displayDebug("$leftJustTab Pos: $iPos, $rightJustTab Pos: $jPos, Line: $convString",2,$currentSubroutine);
 
     # if both iPos and jPos were -1 (i.e. neither string found) then their sum would be -2
     while ( $iPos + $jPos > -2 ) {                                               # tab stops found in string
@@ -2015,11 +2060,11 @@ sub putInTabs {
 	  $convString = substr($convString, 0, $iPos) . $pad . substr($convString, $iPos + 1);
         }  
         # rescan for tab stops as the positions will have changed
-	$iPos = index($convString, '!') ;
-	$jPos = index($convString, '~') ;
-        displayDebug("! Pos: $iPos, ~ Pos: $jPos, Line: $convString",2,$currentSubroutine);
+	$iPos = index($convString, $leftJustTab) ;
+	$jPos = index($convString, $rightJustTab) ;
+        displayDebug("$leftJustTab Pos: $iPos, $rightJustTab Pos: $jPos, Line: $convString",2,$currentSubroutine);
       }
-      else { # ~ must be next to process (the ~ means that the next token will be right justified to the tab stop)
+      else { # $rightJustTab must be next to process (the $rightJustTab means that the next token will be right justified to the tab stop)
 	$pad = " ";
 	my $kPos = $jPos + 1;
         # find the end of the token
@@ -2046,9 +2091,9 @@ sub putInTabs {
 	  $convString = substr($convString, 0, $jPos) . $pad . substr($convString, $jPos + 1);
 	}
 	# rescan for tab stops as the positions will have changed
-	$iPos = index($convString, '!') ;
-	$jPos = index($convString, '~') ;
-        displayDebug("! Pos: $iPos, ~ Pos: $jPos, Line: $convString",2,$currentSubroutine);
+	$iPos = index($convString, $leftJustTab) ;
+	$jPos = index($convString, $rightJustTab) ;
+        displayDebug("$leftJustTab Pos: $iPos, $rightJustTab Pos: $jPos, Line: $convString",2,$currentSubroutine);
       }
     }
   }
@@ -2999,15 +3044,13 @@ sub processDMP {
   # -----------------------------------------------------------
 
   my $currentSubroutine = 'processDMP';
-  my $num_of_fields = 0;                                       # field containgin the number of columns returned
+  my $num_of_fields = 0;                                       # field containing the number of columns returned
   my $tStr = "";                                               # this string will hold the generated output line
   my $skelTabValue = '';                                       # value of the column
 
   my $card = shift;                                            # get the card information
   my $DBConnectionRef = getToken($card);                       # (CONNREF) this is the database ref that a )LOGON should have created
   my $SQL = trim(substr($card,$currentLinePosition));          # (SQL Statement) SQL to be used
-
-  my $TMP_File = "";                                           # temporary file name
 
   if ( $skelSelSkipCards eq "No" ) {                           # not skipping cards because of a failed )SEL
     if ( $skelDOTSkipCards eq "No" ) {                         # Not within a )DOT being skipped
@@ -3325,8 +3368,8 @@ sub processGRAPH {
         
         my $firstLine = 1;
 
-        if ( ! defined($skelConnection{$DBConnectionRef}) ) { # An )open hasn't created the database connection yet - fail this statement
-          displayError("A previous )OPEN statement has not created a connection for $DBConnectionRef\nThis )GRAPH will be ignored",$currentSubroutine);
+        if ( ! defined($skelConnection{$DBConnectionRef}) ) { # A )LOGON hasn't created the database connection yet - fail this statement
+          displayError("A previous )LOGON statement has not created a connection for $DBConnectionRef\nThis )GRAPH will be ignored",$currentSubroutine);
         }
         else {
           # now process the open
@@ -3713,7 +3756,7 @@ sub processCTAB {
   # -----------------------------------------------------------  
   
   my $currentSubroutine = 'processCTAB';
-  my $num_of_fields = 0;                                       # field containgin the number of columns returned
+  my $num_of_fields = 0;                                       # field containing the number of columns returned
   my $tStr = "";                                               # this string will hold the generated output line
   my $skelTabValue = '';                                       # value of the column
 
@@ -3721,7 +3764,6 @@ sub processCTAB {
   my $DBConnectionRef = getToken($card);                       # (CONNREF) this is the database ref that a )LOGON should have created
   my $SQL = trim(substr($card,$currentLinePosition));          # (SQL Statement) SQL to be used
   
-  my $TMP_File = "";                                           # temporary file name
   my $parms  = '';                                             # parms being passed to control what is generated
   my $buttonName = '';                                         # button name if supplied
   my $newSQL = ''; 
@@ -3796,8 +3838,8 @@ sub processCTAB {
       
         $cursorSQL{'CTAB'} = $SQL;                               # set up the SQL
 
-        if ( ! defined($skelConnection{$DBConnectionRef}) ) { # An )open hasn't created the database connection yet - fail this statement
-          displayError("A previous )OPEN statement has not created a connection for $DBConnectionRef\nThis )CTAB will be ignored",$currentSubroutine);
+        if ( ! defined($skelConnection{$DBConnectionRef}) ) { # A )LOGON hasn't created the database connection yet - fail this statement
+          displayError("A previous )LOGON statement has not created a database connection for $DBConnectionRef\nThis )CTAB will be ignored",$currentSubroutine);
         }
         else {
           # now process the open
@@ -4028,14 +4070,13 @@ sub processSBOX {
   my $card = shift;                                            # get the card information
 
   my $currentSubroutine = 'processSBOX';
-  my $num_of_fields = 0;                                       # filed containgin the number of columns returned
+  my $num_of_fields = 0;                                       # field containing the number of columns returned
   my $tStr = "";                                               # this string will hold the generated output line
   my $skelTabValue = '';                                       # value of the column
 
   my $DBConnectionRef = getToken($card);                       # (CONNREF) this is the database ref that a )LOGON should have created
   my $SQL = trim(substr($card,$currentLinePosition));          # (SQL Statement) SQL to be used
   
-  my $TMP_File = "";                                           # temporary file name
   my $parms  = '';                                             # parms being passed to control what is generated
   my $ID  = 'A';                                               # ID name to use for the checkboxes
   my $buttonName = '';                                         # button name if supplied
@@ -4073,8 +4114,8 @@ sub processSBOX {
       
         $cursorSQL{'SBOX'} = $SQL;                               # set up the SQL
 
-        if ( ! defined($skelConnection{$DBConnectionRef}) ) { # An )open hasn't created the database connection yet - fail this statement
-          displayError("A previous )OPEN statement has not created a connection for $DBConnectionRef\nThis )SBOX will be ignored",$currentSubroutine);
+        if ( ! defined($skelConnection{$DBConnectionRef}) ) { # A )LOGON hasn't created the database connection yet - fail this statement
+          displayError("A previous )LOGON statement has not created a database connection for $DBConnectionRef\nThis )SBOX will be ignored",$currentSubroutine);
         }
         else {
           # now process the open
@@ -4288,7 +4329,7 @@ sub processFTAB {
   # -----------------------------------------------------------  
   
   my $currentSubroutine = 'processFTAB';
-  my $num_of_fields = 0;                                       # filed containgin the number of columns returned
+  my $num_of_fields = 0;                                       # field containing the number of columns returned
   my $tStr = "";                                               # this string will hold the generated output line
   my $skelTabValue = '';                                       # value of the column
 
@@ -4296,8 +4337,6 @@ sub processFTAB {
   my $DBConnectionRef = getToken($card);                       # (CONNREF) this is the database ref that a )LOGON should have created
   my $SQL = trim(substr($card,$currentLinePosition));          # (SQL Statement) SQL to be used
   
-  my $TMP_File = "";                                           # temporary file name
-
   my $FTAB_output_len = 0;                                     # note that the count needs to be kept in the routine as it is only for FTAB generated output
 
   if ( $skelSelSkipCards eq "No" ) {                           # not skipping cards because of a failed )SEL
@@ -4310,8 +4349,8 @@ sub processFTAB {
       
       $cursorSQL{'FTAB'} = $SQL;                               # set up the SQL
 
-      if ( ! defined($skelConnection{$DBConnectionRef}) ) { # An )open hasn't created the database connection yet - fail this statement
-        displayError("A previous )OPEN statement has not created a connection for $DBConnectionRef\nThis )FTAB will be ignored",$currentSubroutine);
+      if ( ! defined($skelConnection{$DBConnectionRef}) ) { # A )LOGON hasn't created the database connection yet - fail this statement
+        displayError("A previous )LOGON statement has not created a database connection for $DBConnectionRef\nThis )FTAB will be ignored",$currentSubroutine);
       }
       else {
         # now process the open
@@ -4488,7 +4527,6 @@ sub processFXTAB {
   my $MRKEntry = 'X';
   my $MRKEmpty = ' ';
   
-  my $TMP_File = "";                                           # temporary file name
   my %colData = ();                                            # initialise the array to hold the table data
   my %colDataCount = ();                                       # array to old the count of the number of entries
   my %revColData = ();                                         # initialise the reverse array
@@ -4525,8 +4563,8 @@ sub processFXTAB {
       
       $cursorSQL{'FXTAB'} = $SQL;                               # set up the SQL
 
-      if ( ! defined($skelConnection{$DBConnectionRef}) ) { # An )open hasn't created the database connection yet - fail this statement
-        displayError("A previous )OPEN statement has not created a connection for $DBConnectionRef\nThis )FTAB will be ignored",$currentSubroutine);
+      if ( ! defined($skelConnection{$DBConnectionRef}) ) { # A )LOGON hasn't created the database connection yet - fail this statement
+        displayError("A previous )LOGON statement has not created a database connection for $DBConnectionRef\nThis )FXTAB will be ignored",$currentSubroutine);
       }
       else {
         # now process the open
@@ -4732,7 +4770,6 @@ sub processDOCMD {
   my $DBConnectionRef = getToken($card);                       # (CONNREF) this is the database ref that a )LOGON should have created
   my $SQL = trim(substr($card,$currentLinePosition));          # (SQL Statement) SQL to be used
   
-  my $TMP_File = "";                                           # temporary file name
   my $actionType = '';
   
   if ( $skelSelSkipCards eq "No" ) {                           # not skipping cards because of a failed )SEL
@@ -4757,9 +4794,9 @@ sub processDOCMD {
       
       $cursorSQL{'DOCMD'} = $SQL;                               # set up the SQL
 
-      if ( ! defined($skelConnection{$DBConnectionRef}) ) { # An )open hasn't created the database connection yet - fail this statement
+      if ( ! defined($skelConnection{$DBConnectionRef}) ) { # A )LOGON hasn't created the database connection yet - fail this statement
         my $tmpLine = $currentSkelLine +1;
-        displayError("A previous )OPEN statement has not created a connection for $DBConnectionRef\nThis )DOCMD will be ignored",$currentSubroutine);
+        displayError("A previous )LOGON statement has not created a database connection for $DBConnectionRef\nThis )DOCMD will be ignored",$currentSubroutine);
       }
       else {
         # now process the open
@@ -4800,15 +4837,13 @@ sub processFVTAB {
   # -----------------------------------------------------------  
   
   my $currentSubroutine = 'processFVTAB';
-  my $num_of_fields = 0;                                       # filed containgin the number of columns returned
+  my $num_of_fields = 0;                                       # field containing the number of columns returned
   my $tStr = "";                                               # this string will hold the generated output line
   my $skelTabValue = '';                                       # value of the column
 
   my $card = shift;                                            # get the card information
   my $DBConnectionRef = getToken($card);                       # (CONNREF) this is the database ref that a )LOGON should have created
   my $SQL = trim(substr($card,$currentLinePosition));          # (SQL Statement) SQL to be used
-  
-  my $TMP_File = "";                                           # temporary file name
   
   if ( $skelSelSkipCards eq "No" ) {                           # not skipping cards because of a failed )SEL
     if ( $skelDOTSkipCards eq "No" ) {                         # Not within a )DOT being skipped
@@ -4820,8 +4855,8 @@ sub processFVTAB {
       
       $cursorSQL{'FVTAB'} = $SQL;                               # set up the SQL
 
-      if ( ! defined($skelConnection{$DBConnectionRef}) ) { # An )open hasn't created the database connection yet - fail this statement
-        displayError("A previous )OPEN statement has not created a connection for $DBConnectionRef\nThis )FTAB will be ignored",$currentSubroutine);
+      if ( ! defined($skelConnection{$DBConnectionRef}) ) { # A )LOGON hasn't created the database connection yet - fail this statement
+        displayError("A previous )LOGON statement has not created a database connection for $DBConnectionRef\nThis )FTAB will be ignored",$currentSubroutine);
       }
       else {
         # now process the open
@@ -4900,6 +4935,142 @@ sub processFVTAB {
     displayDebug("Skipped: $card. Sel Count = $skelSELCount, SEL Resume Level = $skelSEL_resumeLevel",2,$currentSubroutine);
   }
 } # end of processFVTAB
+
+sub processDOSEL {
+  # -----------------------------------------------------------
+  # Routine to populateinternal variables with values from a SQL statement
+  #
+  # The DOSEL control statement looks like )DOSEL <DB Ref> <Var Qualifier> <SQL Statement>
+  #
+  # Usage: processDOSEL(<control Card>)
+  # Returns: nothing but will update various internal variables as 
+  #          indicated by the SQL being executed
+  # -----------------------------------------------------------  
+  
+  my $currentSubroutine = 'processDOSEL';
+  my $num_of_fields = 0;                                       # field containing the number of columns returned
+  my $skelTabValue = '';                                       # value of the column
+
+  my $card = shift;                                            # get the card information
+  my $DBConnectionRef = getToken($card);                       # (CONNREF) this is the database ref that a )LOGON should have created
+  my $varQualifier = getToken($card);                          # (VARQUAL) this value will be prefixed to the returned column names (if NONE specified then 
+                                                               # variable name wont be qualified
+  my $SQL = trim(substr($card,$currentLinePosition));          # (SQL Statement) SQL to be used
+  
+  if ( $skelSelSkipCards eq "No" ) {                           # not skipping cards because of a failed )SEL
+    if ( $skelDOTSkipCards eq "No" ) {                         # Not within a )DOT being skipped
+      
+      if ( uc($SQL) =~ "^FILE\:|^SQL\:|^FILE\=|^SQL\=" ) {                    # does the sql start with either SQL: or FILE: or SQL= or FILE=
+        $SQL = loadSQL(trim(substr($SQL,$+[0])) , $currentSubroutine);             # load the SQL
+      }
+      
+      $cursorSQL{'DOSEL'} = $SQL;                               # set up the SQL
+
+      if ( ! defined($skelConnection{$DBConnectionRef}) ) { # A )LOGON hasn't created the database connection yet - fail this statement
+        displayError("A previous )LOGON statement has not created a database connection for $DBConnectionRef\nThis )DOSEL will be ignored",$currentSubroutine);
+      }
+      else {
+        # now process the open
+        if ( establishCursor( $DBConnectionRef, 'DOSEL' ) ) {     # returns 1 if all is ok (and attempts to read the first row)
+        
+          if ( $cursorRowNumber{'DOSEL'} == 0 ) {                 # no rows returned (should be 1 at this point)
+            displayDebug("Call to SQL returned 0 rows",2,$currentSubroutine);
+            outputLine("No Data Returned"); 
+          }
+          else { # a row was returned
+            displayDebug("Rows returned",2,$currentSubroutine);
+            $num_of_fields = $skelCursor{'DOSEL'}->{NUM_OF_FIELDS};   # establish the number of columns returned
+            displayDebug("Number of fields = $num_of_fields\n",2,$currentSubroutine);
+            
+            if ( uc($varQualifier) eq 'NONE' ) { $varQualifier = ''; } # if NONE is specified then dont qualifier the variable names
+            else { $varQualifier .= '_'; }                            # construct the qualifier
+          
+            # write out the data .....
+          
+            displayDebug("Reading from Cursor",2,$currentSubroutine);
+            for ( my $i=0; $i<$num_of_fields; $i++ ) { # loop through the columns returned
+              my $fieldType = $skelCursor{'DOSEL'}->{TYPE}->[$i]; # $fieldType is now the field type (CHAR, VARCHAR etc)
+              displayDebug("Field number $i ($skelCursor{'DOSEL'}->{NAME}->[$i]) has a field type of $fieldType",2,$currentSubroutine);
+              $skelTabValue = "";
+              $skelTabValue = getTabValue($fieldType, ${$skelCursorRow{'DOSEL'}}[$i], 'FVTAB',  $i);   # pass field type and the field across
+              
+              displayDebug("Assigning variable $varQualifier$skelCursor{'DOSEL'}->{NAME}->[$i] the value of $skelTabValue",2,$currentSubroutine);
+              setVariable("$varQualifier$skelCursor{'DOSEL'}->{NAME}->[$i]", $skelTabValue);
+  
+            } # end of for loop processing columns
+            
+            # only read the first row - discard all other data  
+            
+            closeCursor('DOSEL');                # close the FVTAB cursor
+          }
+        }
+        else { # Problems in river city - open cursor failed
+          if ( $skelVerboseSQLErrors eq 'Yes' ) {
+            if ( $SQLError ) { # SQL Error (not just no rows found)
+              displayError("Call to SQL failed - will pretend no records found\nSQL in error: $SQL",$currentSubroutine);
+            }
+            else {
+              displayError("No Rows Found for SQL:\n $SQL",$currentSubroutine);
+            }
+          }
+          else { # not verbose - dont mention it if no rows found and if SQL error dont print SQL
+            if ( $SQLError ) { # SQL Error (not just no rows found)
+              displayError("Call to SQL failed - will pretend no records found\n",$currentSubroutine);
+            }
+          }
+        }
+        displayDebug("Processed: $card. Sel Count = $skelSELCount, SEL Resume Level = $skelSEL_resumeLevel",2,$currentSubroutine);
+      }
+    }
+    else { # Skipped because within a failed or empty  )DOT
+      displayDebug("Skipped: $card. Sel Count = $skelSELCount, SEL Resume Level = $skelSEL_resumeLevel",2,$currentSubroutine);
+    }
+  }
+  else { # Skipped because within a failed )SEL
+    displayDebug("Skipped: $card. Sel Count = $skelSELCount, SEL Resume Level = $skelSEL_resumeLevel",2,$currentSubroutine);
+  }
+} # end of processDOSEL
+
+sub processCHECKFORROW {
+  # -----------------------------------------------------------
+  # Routine to check if the supplied SQL will return a row
+  #
+  # Usage: processCHECKFORROW(<control Card>)
+  # Returns: 1 if rows found and 0 for no rows or error
+  # -----------------------------------------------------------  
+  
+  my $currentSubroutine = 'processCHECKFORROWS';
+  my $skelTabValue = '';                                       # value of the column
+
+  my $DBConnectionRef = shift;                                 # (CONNREF) this is the database ref that a )LOGON should have created
+  my $SQL = shift;                                             # (SQL Statement) SQL to be used
+  
+  if ( uc($SQL) =~ "^FILE\:|^SQL\:|^FILE\=|^SQL\=" ) {                    # does the sql start with either SQL: or FILE: or SQL= or FILE=
+    $SQL = loadSQL(trim(substr($SQL,$+[0])) , $currentSubroutine);             # load the SQL
+  }
+      
+  $cursorSQL{'CHECKFORROWS'} = $SQL;                               # set up the SQL
+
+  if ( ! defined($skelConnection{$DBConnectionRef}) ) { # A )LOGON hasn't created the database connection yet - fail this statement
+  foreach my $tmpX (keys %skelConnection ) { print STDERR "Connection for $tmpX exists\n"; }
+    displayError("A previous )LOGON statement has not created a database connection for '$DBConnectionRef'\nThis test will return 0",$currentSubroutine);
+  }
+  else {
+    # now process the open
+    if ( establishCursor( $DBConnectionRef, 'CHECKFORROWS' ) ) {     # returns 1 if all is ok (and attempts to read the first row)
+        
+      if ( $cursorRowNumber{'CHECKFORROWS'} == 0 ) {                 # no rows returned (should be 1 at this point)
+        displayDebug("Call to SQL returned 0 rows",2,$currentSubroutine);
+      }
+      else { # a row was returned
+        displayDebug("Rows returned",2,$currentSubroutine);
+        return 1;
+      }
+      closeCursor('CHECKFORROWS');
+    }
+  }
+  return 0;
+} # end of processCHECKFORROW
 
 sub processDOT { 
   # -----------------------------------------------------------
@@ -5015,8 +5186,8 @@ sub establishDOTLoop {
       displayDebug("PUSHING onto stack - #entries $cnt",2,$currentSubroutine);
       displayDebug("Pushing control counts: \$skelDOFCount=$skelDOFCount,\$skelDOTCount=$skelDOTCount,\$skelSELCount=$skelSELCount",2,$currentSubroutine);
       $skelDOTCount++;                     # Keep track of )DOT control cards encountered
-      if ( ! defined($skelConnection{$DBConnectionRef}) ) { # An )open hasn't created the database connection yet - fail this statement
-        displayError("A previous )OPEN statement has not created a connection for $DBConnectionRef\nThis )DOT will be ignored",$currentSubroutine);
+      if ( ! defined($skelConnection{$DBConnectionRef}) ) { # A )LOGON hasn't created the database connection yet - fail this statement
+        displayError("A previous )LOGON statement has not created a database connection for $DBConnectionRef\nThis )DOT will be ignored",$currentSubroutine);
         $skelDOTSkipCards = "Yes";              # skip cards till we get to a )ENDDOT at the same level
         $skelDOT_resumeLevel = $skelDOTCount - 1;   # level at which processing will be resumed (will be tested for each )ENDDOT encountered) 
       }
@@ -5145,8 +5316,7 @@ sub processWHEN {
   my $currentSubroutine = 'processWHEN';
   
   my $card = shift;  
-  my $runStatement = 0;                 # flag indicating if the statement will be run
-
+  
   if ( ( $skelSelSkipCards eq "No" ) && ( $skelDOTSkipCards eq "No" ) ) { # not skipping cards
   
     # check for the existence of the THEN parameter .... if it doesn't exist skip the card with error message
@@ -5156,35 +5326,7 @@ sub processWHEN {
       my $tmpI = trim(substr($condition,6));                  # strip off the )WHEN at the start
       displayDebug("condition=$condition, adjusted cond=$tmpI, statement=$statement",1, $currentSubroutine);    
       displayDebug("Parsing the following statement (WHEN) : $tmpI",2,$currentSubroutine);
-      if ( uc(substr($tmpI,0,8)) eq "DEFINED(" ) {       # special function DEFINED ....
-        my $tmpVar = substr($tmpI,8,length($tmpI)-9);    # assume that there is a trailing )
-        if ( defined($skelVarArray{$tmpVar}) ) {         # variable is defined  so evaluates true
-          displayDebug("Condition evaluated to True",2,$currentSubroutine);
-          $runStatement = 1;
-        }
-        else { # variable is not defined so evaluates false
-          displayDebug("Condition evaluated to False",2,$currentSubroutine);
-        }
-      }
-      elsif ( uc(substr($tmpI,0,12)) eq "NOT_DEFINED(" ) { # special function ....
-        my $tmpVar = substr($tmpI,12,length($tmpI)-13);    # assume that there is a trailing )
-        if ( defined($skelVarArray{$tmpVar}) ) {           # variable is defined  so evaluates false
-          displayDebug("Condition evaluated to False",2,$currentSubroutine);
-        }
-        else { # variable is not defined so evaluates true
-          displayDebug("Condition evaluated to True",2,$currentSubroutine);
-          $runStatement = 1;
-        }
-      }
-      elsif ( evaluateCondition($tmpI) ) { # evaluate returns 1 for true and 0 for false
-        displayDebug("Condition evaluated to True",2,$currentSubroutine);
-        $runStatement = 1;
-      } 
-      else { # evaluated false
-        displayDebug("Condition evaluated to False",2,$currentSubroutine);
-      }
-      # done the testing so now run the command if WHEN evaluated to true
-      if ( $runStatement ) { 
+      if ( processCondition($tmpI) ) {             # returns 1 if condition is true
         $statement = trim($statement);             # remove leading and trailing spaces
         if ( substr( $statement,0,1) eq ')' )  {   # it is a control card the check that it is a valid one to process
           my @bits = split (" ", $statement);
@@ -5211,6 +5353,71 @@ sub processWHEN {
   }
 } # end of processWHEN
 
+sub processCondition { 
+  # -----------------------------------------------------------
+  # Routine to process condition part of the )SEL, SELELSE or )WHEN card 
+  #
+  # It will process the DEFINED, NOT_DEFINED, ROWS_EXIST and NO_ROWS_EXIST 
+  # functions itself but use evaluateCondition to evaluate all other checks
+  #
+  # Usage: processCondition(<conndition>)
+  # Returns: 1 or zero depending on the result of checking the condition
+  # -----------------------------------------------------------
+  
+  my $currentSubroutine = 'processCondition';
+  
+  my $card = shift;  
+
+  displayDebug("Condition being tested is '$card'",2,$currentSubroutine);
+  if ( uc(substr($card,0,8)) eq "DEFINED(" ) {       # special function DEFINED ....
+    my $tmpVar = substr($card,8,length($card)-9);    # assume that there is a trailing )
+    if ( defined($skelVarArray{$tmpVar}) ) {         # variable is defined  so evaluates true
+      return 1; 
+    }
+    else { # variable is not defined so evaluates false
+      return 0;
+    }
+  }
+  elsif ( uc(substr($card,0,12)) eq "NOT_DEFINED(" ) { # special function ....
+    my $tmpVar = substr($card,12,length($card)-13);    # assume that there is a trailing )
+    if ( defined($skelVarArray{$tmpVar}) ) {           # variable is defined  so evaluates false
+      return 0;
+    }
+    else { # variable is not defined so evaluates true
+      return 1;
+    }
+  }
+  elsif ( uc(substr($card,0,11)) eq "ROWS_EXIST(" ) { # special function ....
+    my $tmpSQL = substr($card,11,length($card)-12);   # assumes the function is terminated with a )
+    my $dbConnection = '';
+    for ( my $i = 0; $i < length($tmpSQL); $i++ ) {
+      if ( substr($tmpSQL,$i,1) eq ' ' ) { $tmpSQL = substr($tmpSQL, $i+1) ; last; } # stop when you get to the first space
+      $dbConnection .= substr($tmpSQL,$i,1);
+    }
+    $tmpSQL = trim($tmpSQL);        # trim leading and trailing spaces
+    return processCHECKFORROW("$dbConnection", $tmpSQL)  # will return1 if a row is found and 0 if no row is found or error
+  }
+  elsif ( uc(substr($card,0,14)) eq "NO_ROWS_EXIST(" ) { # special function ....
+    my $tmpSQL = substr($card,14,length($card)-15);      # assumes the function is terminated with a )
+    my $dbConnection = '';
+    for ( my $i = 0; $i < length($tmpSQL); $i++ ) {
+      if ( substr($tmpSQL,$i,1) eq ' ' ) { $tmpSQL = substr($tmpSQL, $i+1) ; last; } # stop when you get to the first space
+      $dbConnection .= substr($tmpSQL,$i,1);
+    }
+    $tmpSQL = trim($tmpSQL);        # trim leading and trailing spaces
+    if ( processCHECKFORROW("$dbConnection", $tmpSQL) ) { # will return1 if a row is found and 0 if no row is found or error
+      return 0;
+    }
+    else { # there were no rows
+      return 1;
+    }
+  }
+  else { # evaluate it as logical or numeric condition
+    return evaluateCondition($card) ;  # evaluate returns 1 for true and 0 for false
+  }
+  
+} # end of processCondition
+
 sub processSEL { 
   # -----------------------------------------------------------
   # Routine to process the )SEL or )IF card 
@@ -5224,44 +5431,19 @@ sub processSEL {
   
   my $card = shift;  
 
-  if ( ( $skelSelSkipCards eq "No" ) && ( $skelDOTSkipCards eq "No" ) ) { # not skipping cards
+   if ( ( $skelSelSkipCards eq "No" ) && ( $skelDOTSkipCards eq "No" ) ) { # not skipping cards
     my $cnt = push(@controlStack,($skelDOEXECCount,$skelDOFCount,$skelDOTCount,$skelSELCount));      # save counts on entry
     displayDebug("PUSHING onto stack - #entries $cnt",2,$currentSubroutine);
     displayDebug("Pushing control counts: \$skelDOFCount=$skelDOFCount,\$skelDOTCount=$skelDOTCount,\$skelSELCount=$skelSELCount",2,$currentSubroutine);
     $skelSELCount++;                                                      # keep track ofthe )SEL level we are at
-    my $tmpI = trim(substr($card,5));                                      # tmpI now holds the condition
+    my $tmpI = trim(substr($card,5));                                     # tmpI now holds the condition
     displayDebug("Passing the following condition (SEL) : $tmpI",2,$currentSubroutine);
-    if ( uc(substr($tmpI,0,8)) eq "DEFINED(" ) { # special function ....
-      my $tmpVar = substr($tmpI,8,length($tmpI)-9);
-      if ( defined($skelVarArray{$tmpVar}) ) { # variable is defined  so evaluates true
-        displayDebug("Condition evaluated to True",2,$currentSubroutine);
-        $skelGotoENDSEL = "Yes";                                          # indicates that after the next ENDSEL we need to skip to the )ENDSEL for this )SEL                  
-      }
-      else { # variable is not defined so evaluates false
-        displayDebug("Condition evaluated to False",2,$currentSubroutine);
-        $skelSelSkipCards = "Yes";                                        # )sel is false so skip cards until the next )SELELSE or )ENDSEL
-        $skelSEL_resumeLevel = $skelSELCount - 1;                         # indicator to show at what stack level the processing should restart (to copy with )SEL within )SEL
-        $skelGotoENDSEL = "No";                                           # indicates that we haven't finished with this )SEL as yet - there may be a )SELELSE that will be true
-      }
-    }
-    elsif ( uc(substr($tmpI,0,12)) eq "NOT_DEFINED(" ) { # special function ....
-      my $tmpVar = substr($tmpI,12,length($tmpI)-13);
-      if ( defined($skelVarArray{$tmpVar}) ) { # variable is defined  so evaluates false
-        displayDebug("Condition evaluated to False",2,$currentSubroutine);
-        $skelSelSkipCards = "Yes";                                        # )sel is false so skip cards until the next )SELELSE or )ENDSEL
-        $skelSEL_resumeLevel = $skelSELCount - 1;                         # indicator to show at what stack level the processing should restart (to copy with )SEL within )SEL
-        $skelGotoENDSEL = "No";                                           # indicates that we haven't finished with this )SEL as yet - there may be a )SELELSE that will be true
-      }
-      else { # variable is not defined so evaluates true
-        displayDebug("Condition evaluated to True",2,$currentSubroutine);
-        $skelGotoENDSEL = "Yes";                                          # indicates that after the next ENDSEL we need to skip to the )ENDSEL for this )SEL                  
-      }
-    }
-    elsif ( evaluateCondition($tmpI) ) { # evaluate returns 1 for true and 0 for false
+ 
+    if ( processCondition($tmpI) ) { # returns 1 if condition is true
       displayDebug("Condition evaluated to True",2,$currentSubroutine);
       $skelGotoENDSEL = "Yes";                                          # indicates that after the next ENDSEL we need to skip to the )ENDSEL for this )SEL                  
     }
-    else { # evaluated false
+    else { # condition evaluated to false
       displayDebug("Condition evaluated to False",2,$currentSubroutine);
       $skelSelSkipCards = "Yes";                                        # )sel is false so skip cards until the next )SELELSE or )ENDSEL
       $skelSEL_resumeLevel = $skelSELCount - 1;                         # indicator to show at what stack level the processing should restart (to copy with )SEL within )SEL
@@ -5273,6 +5455,7 @@ sub processSEL {
     $skelSELCount++;                                                      # keep track ofthe )SEL level we are at
     displayDebug("Skipped: $card, Sel Count = $skelSELCount, SEL Resume Level = $skelSEL_resumeLevel",2,$currentSubroutine);
   }
+
 } # end of processSEL
 
 sub processSELELSE { 
@@ -5302,43 +5485,18 @@ sub processSELELSE {
 	else { # the SELELSE has a condition parameter
           $tmpI = trim(substr($card,9));
           displayDebug("Passing the following condition (SELELSE) : $tmpI",2,$currentSubroutine);
-          if ( uc(substr($tmpI,0,8)) eq "DEFINED(" ) { # special function ....
-            my $tmpVar = substr($tmpI,8,length($tmpI)-9);
-            if ( defined($skelVarArray{$tmpVar}) ) { # variable is defined  so evaluates true
-              displayDebug("Condition evaluated to True",2,$currentSubroutine);
-              $skelGotoENDSEL = "Yes";                                          # indicates that after the next ENDSEL we need to skip to the )ENDSEL for this )SEL                  
-            }
-            else { # variable is not defined so evaluates false
-              displayDebug("Condition evaluated to False",2,$currentSubroutine);
-              $skelSelSkipCards = "Yes";                                        # )sel is false so skip cards until the next )SELELSE or )ENDSEL
-              $skelSEL_resumeLevel = $skelSELCount - 1;                         # indicator to show at what stack level the processing should restart (to copy with )SEL within )SEL
-              $skelGotoENDSEL = "No";                                           # indicates that we haven't finished with this )SEL as yet - there may be a )SELELSE that will be true
-            }
-          }
-          elsif ( uc(substr($tmpI,0,12)) eq "NOT_DEFINED(" ) { # special function ....
-            my $tmpVar = substr($tmpI,12,length($tmpI)-13);
-            if ( defined($skelVarArray{$tmpVar}) ) { # variable is defined  so evaluates false
-              displayDebug("Condition evaluated to False",2,$currentSubroutine);
-              $skelSelSkipCards = "Yes";                                        # )sel is false so skip cards until the next )SELELSE or )ENDSEL
-              $skelSEL_resumeLevel = $skelSELCount - 1;                         # indicator to show at what stack level the processing should restart (to copy with )SEL within )SEL
-              $skelGotoENDSEL = "No";                                           # indicates that we haven't finished with this )SEL as yet - there may be a )SELELSE that will be true
-            }
-            else { # variable is not defined so evaluates true
-              displayDebug("Condition evaluated to True",2,$currentSubroutine);
-              $skelGotoENDSEL = "Yes";                                          # indicates that after the next ENDSEL we need to skip to the )ENDSEL for this )SEL                  
-            }
-          }
-          elsif ( evaluateCondition($tmpI) ) { # evaluateCondition returns 1 for true and 0 for false
-	    displayDebug("Condition >$tmpI< evaluated to True",2,$currentSubroutine);
+          
+          if ( processCondition($tmpI) ) { # returns 1 if condition is true
+            displayDebug("Condition evaluated to True",2,$currentSubroutine);
 	    $skelSelSkipCards = "No";                        # process the cards in this )SELELSE group
-            $skelGotoENDSEL = "Yes";                         # after processing goto the )ENDSEL
+            $skelGotoENDSEL = "Yes";                         # indicates that after the next ENDSEL we need to skip to the )ENDSEL for this )SEL                  
           }
-          else { # condition was false
-            displayDebug("Condition >$tmpI< evaluated to False",2,$currentSubroutine);
-            $skelSelSkipCards = "Yes";                       # skip the cards in this )SELELSE group
-	    $skelSEL_resumeLevel = $skelSELCount -1;         # set the resume processing level
-	    $skelGotoENDSEL = "No";                          # keep checking other )SELELSE statements
-	  }
+          else { # evaluated false
+            displayDebug("Condition evaluated to False",2,$currentSubroutine);
+            $skelSelSkipCards = "Yes";                                        # )sel is false so skip cards until the next )SELELSE or )ENDSEL
+            $skelSEL_resumeLevel = $skelSELCount - 1;                         # indicator to show at what stack level the processing should restart (to copy with )SEL within )SEL
+            $skelGotoENDSEL = "No";                                           # indicates that we haven't finished with this )SEL as yet - there may be a )SELELSE that will be true
+          }
 	}
       }  
       else { # SELSkipCards was false which means that pervious SEL/SELELSE was satisfied
@@ -6004,6 +6162,48 @@ sub processDISNOTE {
 
 } # end of processDISNOTE 
 
+sub processSETLEFTJUSTTAB {
+  # -----------------------------------------------------------
+  # Routine to set the left justify tab stop (the value defaults to !)
+  #
+  # Usage:
+  # Returns:
+  # -----------------------------------------------------------
+
+  my $currentSubroutine = 'processSETLEFTJUSTTAB'; 
+  my $card = shift;                                                         # establish the card being processed
+  
+  if ( trim($card) eq '' ) { # no character on statement so just display the character in both debug and output
+    displayDebug("No character set on )SETLEFTJUSTTAB so displaying value: $leftJustTab",1,$currentSubroutine);
+    outputLineNT("No character set on )SETLEFTJUSTTAB so displaying value: $leftJustTab");
+  }
+  else {
+    $leftJustTab = substr(trim($card),0,1);    # set the character
+  }
+
+} # end of processSETLEFTJUSTTAB
+
+sub processSETRIGHTJUSTTAB {
+  # -----------------------------------------------------------
+  # Routine to set the right justify tab stop (the value defaults to ~)
+  #
+  # Usage:
+  # Returns:
+  # -----------------------------------------------------------
+
+  my $currentSubroutine = 'processSETRIGHTJUSTTAB'; 
+  my $card = shift;                                                         # establish the card being processed
+  
+  if ( trim($card) eq '' ) { # no character on statement so just display the character in both debug and output
+    displayDebug("No character set on )SETRIGHTJUSTTAB so displaying value: $rightJustTab",1,$currentSubroutine);
+    outputLineNT("No character set on )SETRIGHTJUSTTAB so displaying value: $rightJustTab");
+  }
+  else {
+    $rightJustTab = substr(trim($card),0,1);    # set the character
+  }
+
+} # end of processSETLEFTJUSTTAB
+
 sub processIMBED {
   # -----------------------------------------------------------
   # Routine to load upa new skeleton if necessary and start processing it
@@ -6190,7 +6390,7 @@ sub processSKELVERS {
   # -----------------------------------------------------------
   # Routine to process the SKELVERS statemnent. The format of the statement is:
   #
-  # )SKELVERS  $Id: processSkeleton.pm,v 1.74 2018/04/17 04:39:25 db2admin Exp db2admin $
+  # )SKELVERS  $Id: processSkeleton.pm,v 1.80 2018/04/23 04:41:49 db2admin Exp db2admin $
   #
   # Usage: processVERSION(<control card>)
   # Returns: sets the internal variable skelVers
@@ -6462,6 +6662,9 @@ sub processControlCard {
   elsif ( $skelCardType eq ")FVTAB" ) {    # FVTAB Control Card - generate a vertically formatted dump of a table
     processFVTAB($card);
   }
+  elsif ( $skelCardType eq ")DOSEL" ) {    # DOSEL Control Card - populate internal variables from a select statement
+    processDOSEL($card);
+  }
   elsif ( $skelCardType eq ")DOF" ) {      # DOF Control Card - read in a file - of the form )DOF [fileRef] [<fileName> [using <CTLFileName>]]
     processDOF($card);
   }
@@ -6571,6 +6774,12 @@ sub processControlCard {
     processGRAPHLIB($card);
   }
   elsif ( ($skelCardType eq ")CM") || ($skelCardType eq ")COMMENT") ) { # CM Control Card - Ignore comment cards
+  }
+  elsif ( ($skelCardType eq ")SETLEFTJUSTTAB") ) {    # Set the left justified tab stop
+    processSETLEFTJUSTTAB(substr($card,15));
+  }
+  elsif ( ($skelCardType eq ")SETRIGHTJUSTTAB") ) {    # Set the right justified tab stop
+    processSETRIGHTJUSTTAB(substr($card,16));
   }
   else { # it wasn't a control card so treat is as a normal card
     if ( ( $skelSelSkipCards eq "No" ) && ( $skelDOTSkipCards eq "No" ) ) { # not skipping cards
