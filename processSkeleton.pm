@@ -2,7 +2,7 @@
 # --------------------------------------------------------------------
 # processSkeleton.pm
 #
-# $Id: processSkeleton.pm,v 1.80 2018/04/23 04:41:49 db2admin Exp db2admin $
+# $Id: processSkeleton.pm,v 1.83 2018/04/24 02:06:35 db2admin Exp db2admin $
 #
 # Description:
 # Script to process a skeleton
@@ -31,6 +31,19 @@
 # ChangeLog:
 #
 # $Log: processSkeleton.pm,v $
+# Revision 1.83  2018/04/24 02:06:35  db2admin
+# add in variables to manage returning error messages back to the guiding
+# skeleton - :lastError and :lastStatementError - lastStatementError is
+# cleared for every control statement
+#
+# Revision 1.82  2018/04/23 23:41:34  db2admin
+# comment out the 'substituteVariables' call in evaluateCondition because the substitutions
+# were being done twice. This was causing any escaped :'s to be treated as variables
+# as the escape character is removed by the time the second substitute occurs
+#
+# Revision 1.81  2018/04/23 05:57:51  db2admin
+# escape out the leading ) of commands on )WHEN statements
+#
 # Revision 1.80  2018/04/23 04:41:49  db2admin
 # close cursor when finished with it in processCHECKFORROWS
 #
@@ -396,6 +409,7 @@ my $cursorDecimalPlaces = -1;             # Number of decimal places to retain a
 my $currentVariable = '';                 # this holds the name of the variable to be assigned the return value from a )FUNC statement 
 my $leftJustTab = '!';                    # character to be used as left justified tab stop
 my $rightJustTab = '~';                   # character to be used as right justified tab stop
+my $statementError = '';                  # variable to hold the last error message
 
 # Database connection detail arrays ....
 
@@ -607,7 +621,7 @@ sub skelVersion {
   # -----------------------------------------------------------
 
   my $currentSubroutine = 'skelVersion'; 
-  my $ID = '$Id: processSkeleton.pm,v 1.80 2018/04/23 04:41:49 db2admin Exp db2admin $';
+  my $ID = '$Id: processSkeleton.pm,v 1.83 2018/04/24 02:06:35 db2admin Exp db2admin $';
   my @V = split(/ /,$ID);
   my $nameStr=$V[1];
   my @N = split(",",$nameStr);
@@ -1081,6 +1095,8 @@ sub displayError {
   }
   else {
     print STDERR "$sub - $tDate $tTime - $currentActiveSkel($tmpLine) : ERROR : $lit\n";
+    setVariable('lastError',$lit);
+    $statementError = $lit;
   }
 } # end of displayError
 
@@ -2149,7 +2165,8 @@ sub evaluateCondition {
   
   my $currentSubroutine = 'evaluateCondition'; 
   my $evalStr = shift;
-  my $substitutedStr = substituteVariables(trim($evalStr));
+  #my $substitutedStr = substituteVariables(trim($evalStr));
+  my $substitutedStr = trim($evalStr);
   $calcDebugLevel = $skelDebugLevel;
   $calcDebugModules = $skelDebugModules;
   my $answer = evaluateInfix($substitutedStr);
@@ -5330,7 +5347,9 @@ sub processWHEN {
         $statement = trim($statement);             # remove leading and trailing spaces
         if ( substr( $statement,0,1) eq ')' )  {   # it is a control card the check that it is a valid one to process
           my @bits = split (" ", $statement);
-          if ( ' )SEL )IF )SELELSE )ENDSEL )DOF )DOT )XDOT )ENDDOT )ENDDOF )ENDDOEXEC )DOEXEC ' =~ uc($bits[0]) ) { # it is a control card that isn't allowed in a WHEN
+          my $tmpSrch = $bits[0];
+          $tmpSrch =~ s/\)/\\\)/g;      # escape otu the leading )
+          if ( ' )SEL )IF )SELELSE )ENDSEL )DOF )DOT )XDOT )ENDDOT )ENDDOF )ENDDOEXEC )DOEXEC ' =~ uc($tmpSrch) ) { # it is a control card that isn't allowed in a WHEN
             displayError("Problems with the )WHEN at card $currentSkelLine in skeleton $currentActiveSkel. Control card used - $bits[0] - is not allowed on a WHEN card",$currentSubroutine);
           } 
           else { # all good to go
@@ -6390,7 +6409,7 @@ sub processSKELVERS {
   # -----------------------------------------------------------
   # Routine to process the SKELVERS statemnent. The format of the statement is:
   #
-  # )SKELVERS  $Id: processSkeleton.pm,v 1.80 2018/04/23 04:41:49 db2admin Exp db2admin $
+  # )SKELVERS  $Id: processSkeleton.pm,v 1.83 2018/04/24 02:06:35 db2admin Exp db2admin $
   #
   # Usage: processVERSION(<control card>)
   # Returns: sets the internal variable skelVers
@@ -7672,6 +7691,8 @@ sub setBaseVariables {
   setVariable('commVers', $a);
   $a = skelVersion();
   setVariable('prSkelVers', $a);
+  setVariable('lastError','');
+
 
 } # end of setBaseVariables 
 
@@ -7786,14 +7807,17 @@ sub processSkeleton {
   my $linesToProcess = 1;
 
   while ( $linesToProcess ) { # while there is still a line to process ....
-    
     # current line is defined as : $skelLines[$skelArray{$currentActiveSkel}][$currentSkelLine]
     my $card = $skelLines[$skelArray{$currentActiveSkel}][$currentSkelLine];
     displayDebug ("Processing Loop: $currentActiveSkel card number $currentSkelLine", 2,$currentSubroutine); 
     displayDebug ("Card $currentSkelLine = $card", 1,$currentSubroutine); 
     
     if ( substr( $card,0,1) eq ')' )  { # it is a control card (always processed in case they reset $skelSelSkipCards or $skelDOTSkipCards
+      # clear out the last error message variable
+      $statementError = '';
+    
       processControlCard($card);
+      setVariable('lastStatementError', $statementError);
     }
     else { # it's not a control card ....
       if ( ( $skelSelSkipCards eq "No" ) && ( $skelDOTSkipCards eq "No" ) ) { # not skipping cards
