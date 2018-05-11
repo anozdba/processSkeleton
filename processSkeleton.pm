@@ -2,7 +2,7 @@
 # --------------------------------------------------------------------
 # processSkeleton.pm
 #
-# $Id: processSkeleton.pm,v 1.83 2018/04/24 02:06:35 db2admin Exp db2admin $
+# $Id: processSkeleton.pm,v 1.87 2018/05/10 23:33:07 db2admin Exp db2admin $
 #
 # Description:
 # Script to process a skeleton
@@ -31,6 +31,19 @@
 # ChangeLog:
 #
 # $Log: processSkeleton.pm,v $
+# Revision 1.87  2018/05/10 23:33:07  db2admin
+# add in )NEXT statement definition to skip tothe next loop iteration
+#
+# Revision 1.86  2018/05/10 07:48:39  db2admin
+# Add in intial )LAST or )LEAVE processing - not tested a lot
+#
+# Revision 1.85  2018/05/09 04:34:12  db2admin
+# clean up file processing code and remove duplication
+# close the file after being processed
+#
+# Revision 1.84  2018/04/30 21:55:51  db2admin
+# expand the definition of a numeric field type and make processing more consistent
+#
 # Revision 1.83  2018/04/24 02:06:35  db2admin
 # add in variables to manage returning error messages back to the guiding
 # skeleton - :lastError and :lastStatementError - lastStatementError is
@@ -400,6 +413,7 @@ my $currentLinePosition = 0 ;             # current scan position in the line be
 my $outputLineCount = 0 ;                 # count of the number of lines that have been output
 my $skelReturnString = '' ;               # string to hold the generated output
 my $skelTermChar = " ()!,.;'~=<>+\|\"-/\\\n"; # characters that will terminate a token within a skeleton
+my $numericFieldTypes = ' 2 3 4 5 6 7 8 -5 -6 NUMERIC'; # field types that define numeric values
 my $machine = '';                         # server the script is running on
 my @traceLevelStack = ();                 # stack to manage trace levels
 my $SQLError = 1;                         # flag indicating that the open cursor returned no rows (worked but couldn't find anything)
@@ -436,6 +450,8 @@ my $skelDOT_resumeLevel = 0;              # DOT stack Value when processing will
 my $skelDOTCount=0;                       # Count of )DOTs found. )DOT increments this and )ENDDOT decrements - should be zero at end
 my @controlStack;                         # stack that will contain the values of skelSELCount, skelDOTCount and skelDOFCount at entry to )DOT, )DOF and )SEL clauses
                                           # This will be used in )ENDSEL/)ENDDOT/)ENDDOF processing to ensure that control structures aren't incorrect ()SEls spanning )DOTs etc)
+my $lastFlagSet = 0;                      # Indicates that a )LAST has been encountered and has skipped to the )END... card
+                                          
 # DOF Variables
 my %DOFLocation;                          # associative array that specifies the position in the skeleton where a )ENDDOF should loop back to. Keyed by fileRef
 my $currentFileRef = '';                  # current file ref being used
@@ -621,7 +637,7 @@ sub skelVersion {
   # -----------------------------------------------------------
 
   my $currentSubroutine = 'skelVersion'; 
-  my $ID = '$Id: processSkeleton.pm,v 1.83 2018/04/24 02:06:35 db2admin Exp db2admin $';
+  my $ID = '$Id: processSkeleton.pm,v 1.87 2018/05/10 23:33:07 db2admin Exp db2admin $';
   my @V = split(/ /,$ID);
   my $nameStr=$V[1];
   my @N = split(",",$nameStr);
@@ -3125,7 +3141,7 @@ sub processDMP {
 
               # put quotes around character fields ....
               if ( isNumeric($fieldType) ) { # probably DB2
-                if ( ($fieldType >= 2) && ($fieldType <= 8) ) { # numeric fields
+                if ( $numericFieldTypes =~ $fieldType ) { # numeric fields
                   $tStr .= $skelTabValue ;
                 }
                 else { # character field ... just normal left alignment
@@ -3196,7 +3212,7 @@ sub getTabValue {
   
   my $formattedValue = "";      # string to be returned
   
-  if ( isNumeric($fieldType) ) { # the fieldtype is numeric - DB2 returns a numeric field type
+  if ( isNumeric($fieldType) ) { # the fieldType is numeric - DB2 returns a numeric field type
     if ( ($fieldType == -1) || ($fieldType == -4) || ($fieldType == -10) ) { # long field
       if ( defined($fieldValue) ) {       # is the field defined? (if it isn't then perhaps it needs to be retrieved
         $formattedValue = $fieldValue;      # just move the data across
@@ -3222,9 +3238,11 @@ sub getTabValue {
             displayDebug("After  Tr: $fieldValue<\n",2,$currentSubroutine);
           }
           if ( $cursorDecimalPlaces != -1 ) { # decimal places has been set
-            displayDebug("Before DP: $fieldValue<\n",2,$currentSubroutine);
-            $fieldValue = sprintf("%." . $cursorDecimalPlaces . "f", $fieldValue);
-            displayDebug("After  DP: $fieldValue<\n",2,$currentSubroutine);
+            if ( $fieldValue =~ /\./ ) { # it is not an integer value
+              displayDebug("Before DP: $fieldValue<\n",2,$currentSubroutine);
+              $fieldValue = sprintf("%." . $cursorDecimalPlaces . "f", $fieldValue);
+              displayDebug("After  DP: $fieldValue<\n",2,$currentSubroutine);
+            }
           }
         }
         if ( $skelDebugLevel > 0 ) { 
@@ -3952,7 +3970,7 @@ sub processCTAB {
                   $skelTabValue = getTabValue($fieldType, ${$skelCursorRow{'CTAB'}}[$i], 'CTAB',  $i);   # pass field type and the field across
   
                   if ( isNumeric($fieldType) ) { # field type is a numeric (DB2 field types are numeric)
-                    if ( ($fieldType >= 2) && ($fieldType <= 8) ) { # right align numeric fields
+                    if ( $numericFieldTypes =~ $fieldType ) { # right align numeric fields
                       $tStr .= "<td align=\"right\">" . $skelTabValue . "</td> ";
                     }
                     else { # character field ... just normal left alignment
@@ -4429,7 +4447,7 @@ sub processFTAB {
   
                 if ( $outputMode eq "HTTP" ) {                          # output it as a html table cell
                   if ( isNumeric($fieldType) ) { # field type is a numeric (DB2 field types are numeric)
-                    if ( ($fieldType >= 2) && ($fieldType <= 8) ) { # right align numeric fields
+                    if ( $numericFieldTypes =~ $fieldType ) { # right align numeric fields
                       $tStr .= "<td align=\"right\">" . $skelTabValue . "</td> ";
                     }
                     else { # character field ... just normal left alignment
@@ -5089,6 +5107,132 @@ sub processCHECKFORROW {
   return 0;
 } # end of processCHECKFORROW
 
+sub processLAST { 
+  # -----------------------------------------------------------
+  # Routine to process the )LAST or)LEAVE card
+  # a )LEAVE card takes no parameters and will just skip to the next end loop card (ENDDOT, ENDDOF or ENDDOEXEC card
+  #
+  # Usage: processLAST(<control card>)
+  # Returns: modifies the current card pointer in the skeleton
+  # -----------------------------------------------------------
+
+  my $card = shift;             # will hold card type (not the full input card)
+  my $searchEnd = ' ';          # this contains the list of termination strings
+  my $currentSubroutine = 'processLAST';
+
+  my $lastValue = 1;
+  if ( $card eq ')NEXT' ) { $lastValue = 0; }    # if it is next then dont exit the loop just jump to next iteration
+
+  if ( ( $skelSelSkipCards eq "No" ) ) { # not excluded because of a failed )SEL
+    if ( ( $skelDOTSkipCards eq "No" ) ) { # not excluded because of a )DOT that returned zero rows
+      # all ok to be processed
+      if ( defined ( $currentFileRef ) && ( $currentFileRef ne '' ) ) { # within an active )DOF
+        $searchEnd .= ')ENDDOF ';
+      }
+      if ( defined ( $currentExecRef ) && ( $currentExecRef ne '' ) ) { # within an active )DOEXEC
+        $searchEnd .= ')ENDDOEXEC ';
+      }
+      if ( defined ( $currentCursorConnection ) ) { # within an active )DOT
+        $searchEnd .= ')ENDDOT ';
+      }
+      
+      if ( $searchEnd eq ' ') { # not in any loop so just ignore the )LAST
+        displayError("This $card card exists outside of a )DOF, )DOT, )XDOT or )DOEXEC loop.\nThis $card will be ignored",$currentSubroutine);
+      }
+      else {
+        # remember the current state
+        my $C_DoExecCount = $skelDOEXECCount;
+        my $C_DOFCount = $skelDOFCount;
+        my $C_DOTCount = $skelDOTCount;
+        my $C_SelCount = $skelSELCount;
+        # find the next termination card .....
+        my $skelLine = $currentSkelLine++;   # start at the next card
+        my @cardParts;
+        my $UC_cardType;
+        my $UC_cardType_srch;
+    
+        while ( defined($skelLines[$skelArray{$currentActiveSkel}][$skelLine]) ) { # while there are still lines in the array
+          if ( defined($skelLines[$skelArray{$currentActiveSkel}][$skelLine]) ) { # if the next line exists then keep on processing
+            @cardParts = split(" ", $skelLines[$skelArray{$currentActiveSkel}][$skelLine]); # break the card into pieces
+            $UC_cardType = 'NONESET';
+            $UC_cardType_srch = 'NONESET';
+            if ( defined($cardParts[0]) ) { 
+              $UC_cardType = uc(trim($cardParts[0]));
+              $UC_cardType_srch = $UC_cardType;
+              $UC_cardType_srch =~ s/\)/\\\)/; # escape out the leading )
+            }
+            if ( "$searchEnd" =~ "$UC_cardType_srch" ) { # found a terminating card
+              # create a condition to look like the end of the loop
+              # print "skelDOFCount=$skelDOFCount, C_DOFCount=$C_DOFCount, UC_cardType=$UC_cardType<\n"; 
+              if ( $UC_cardType eq ')ENDDOF' ) { # check to see if it the matching one
+                if ( $skelDOFCount == $C_DOFCount ) { # is the matching )ENDDOF so set things up and skip to that card
+                  $lastFlagSet = $lastValue;             # set the value based on $card
+                  $currentSkelLine = $skelLine - 1;      # reset the current Line to the card before the terminating card
+                  # print "CurrentSkelLine changed to $currentSkelLine - $skelLines[$skelArray{$currentActiveSkel}][$currentSkelLine]\n";
+                  last;
+                }
+                else { # ignore the )END card as it isn't the right one
+                  $skelDOFCount--;            # adjust the DOF count
+                }
+              }
+              elsif ( $UC_cardType eq ')ENDDOT' ) { # check to see if it the matching one
+                if ( $skelDOTCount == $C_DOTCount ) { # is the matching )ENDDOT so set things up and skip to that card
+                  $lastFlagSet = $lastValue;             # set the value based on $card
+                  $currentSkelLine = $skelLine - 1;      # reset the current Line to the card before the terminating card
+                  last;
+                }
+                else { # ignore the )END card as it isn't the right one
+                  $skelDOTCount--;            # adjust the DOT count
+                }
+              }
+              else { # check to see if it the matching )ENDDOEXEC
+                if ( $skelDOEXECCount == $C_DoExecCount ) { # is the matching )ENDDOEXEC so set things up and skip to that card
+                  $lastFlagSet = $lastValue;             # set the value based on $card
+                  $currentSkelLine = $skelLine - 1;      # reset the current Line to the card before the terminating card
+                  last;
+                }
+                else { # ignore the )END card as it isn't the right one
+                  $skelDOEXECCount--;            # adjust the DOEXEC count
+                }
+              }
+            }
+            elsif ( $UC_cardType eq ')SEL' ) { # adjust the SEL count
+              $skelSELCount++;
+            }
+            elsif ( $UC_cardType eq ')ENDSEL' ) { # adjust the SEL count
+              $skelSELCount--;
+            }
+            elsif ( ($UC_cardType eq ')DOT') || ($UC_cardType eq ')XDOT') ) { # adjust the DOT count
+              $skelDOTCount++;
+            }
+            elsif ( $UC_cardType eq ')ENDDOT' ) { # adjust the DOT count
+              $skelDOTCount--;
+            }
+            elsif ( $UC_cardType eq ')DOF') { # adjust the DOF count
+              $skelDOFCount++;
+            }
+            elsif ( $UC_cardType eq ')ENDDOF' ) { # adjust the DOF count
+              $skelDOFCount--;
+            }
+            elsif ( $UC_cardType eq ')DOEXEC' ) { # adjust the DOEXEC count
+              $skelDOEXECCount++;
+            }
+            elsif ( $UC_cardType eq ')ENDDOEXEC' ) { # adjust the DOEXEC count
+              $skelDOEXECCount--;
+            }
+          }
+          else { # we've come to the end of the skeleton without find a terminating card
+            displayError("Have not found a $searchEnd card following this $card card.\nThis $card will be ignored",$currentSubroutine);
+            last;
+          }
+          $skelLine++;
+        }
+      }
+      displayDebug("LaHave not found a $searchEnd card following this $card card.\nThis $card will be ignored",1,$currentSubroutine);
+    }
+  }
+} # end of processLAST
+
 sub processDOT { 
   # -----------------------------------------------------------
   # Routine to process the )DOT card
@@ -5283,7 +5427,16 @@ sub processENDDOT {
   if ( $skelSelSkipCards eq "No" ) {              # not skipping cards because of SEL
     if ( $skelDOTSkipCards eq "No" ) {            # not skipping cards because of DOT
 
-      if ( getNextRecord($currentCursorConnection) ) { #  data returned
+      if ( $lastFlagSet ) {                       # )LAST has sent processing this way so treat as end of cursor
+        displayDebug(")LAST statement has skipped to )ENDDOT.",2,$currentSubroutine);
+        $skelDOTCount--;                          # only decrement the )DOT count when passing through the card
+        displayDebug("Processed )ENDDOT. DOT Count = $skelDOTCount, DOT Resume Level = $skelDOT_resumeLevel",1,$currentSubroutine);
+        verifyControlCounts();
+        setVariable('LASTDOTCount',$cursorRowNumber{$currentCursorConnection});
+        closeCursor($currentCursorConnection);
+        $lastFlagSet = 0;
+      }
+      elsif ( getNextRecord($currentCursorConnection) ) { #  data returned
         displayDebug("Data returned and put in Array. ",2,$currentSubroutine);
         $currentSkelLine = $DOTLocation{$currentCursorConnection};        # reset current skeleton line to the beginning of the loop
       }
@@ -6014,7 +6167,26 @@ sub processENDDOEXEC {
 
   if ( ( $skelSelSkipCards eq "No" ) && ( $skelDOTSkipCards eq "No" ) ) { # not skipping cards      
   
-    if ( $skelExecStatus{$currentExecRef} == -1) {            # the file was unable to be opened so treat as end of file
+    if ( $lastFlagSet ) {                                      # )LAST has sent processing this way so treat as end of file containing exec output
+      displayDebug(")LAST statement has skipped to )ENDDOEXEC.",2,$currentSubroutine);
+      undef $skelFileStatus{$currentExecRef};
+      if ( defined( $DOEXECLocation{$currentExecRef}) ) { undef $DOEXECLocation{$currentExecRef}; }
+      if ( defined( $skelExecHandle{$currentExecRef}) ) { undef $skelExecHandle{$currentExecRef}; }
+      if ( defined($ctlArray{$currentExecRef}) ) { undef $ctlLines[$ctlArray{$currentExecRef}]; } # clear out the array holding the control cards
+      undef $skelExecHandle{$currentExecRef} ;                 # clear out the file handle for the file
+      undef $skelExecStatus{$currentExecRef} ;                 # clear out the file status
+      delete $ctlArray{$currentExecRef};                       # clear out the control file reference number
+      $currentExecFile = pop(@execStack);                      # reinstate the old file name 
+      my $removed = unlink($currentExecFile);
+      close $currentExecRef;                                   # close the file holding the output
+      $currentExecRef = pop(@execStack);                       # reinstate the old fileRef
+
+      $skelDOEXECCount--;                                           # decrement )DOF count
+      displayDebug("Processed )ENDDOEXEC. DOEXEC Count = $skelDOEXECCount",1,$currentSubroutine);
+      verifyControlCounts();
+      $lastFlagSet = 0;
+    }
+    elsif ( $skelExecStatus{$currentExecRef} == -1) {            # the file was unable to be opened so treat as end of file
       displayDebug("File $currentExecRef  wasn't opened so treated as EOF.",2,$currentSubroutine);
       undef $skelFileStatus{$currentExecRef};
       if ( defined( $DOEXECLocation{$currentExecRef}) ) { undef $DOEXECLocation{$currentExecRef}; }
@@ -6025,6 +6197,7 @@ sub processENDDOEXEC {
       delete $ctlArray{$currentExecRef};                       # clear out the control file reference number
       $currentExecFile = pop(@execStack);                      # reinstate the old file name 
       my $removed = unlink($currentExecFile);
+      close $currentExecRef;                                   # close the file holding the output
       $currentExecRef = pop(@execStack);                       # reinstate the old fileRef
 
       $skelDOEXECCount--;                                           # decrement )DOF count
@@ -6043,6 +6216,7 @@ sub processENDDOEXEC {
       delete $ctlArray{$currentExecRef};                       # clear out the control file reference number
       $currentExecFile = pop(@execStack);                      # reinstate the old file name 
       my $removed = unlink($currentExecFile);
+      close $currentExecRef;                                   # close the file holding the output
       $currentExecRef = pop(@execStack);                       # reinstate the old fileRef
 
       $skelDOEXECCount--;                                           # decrement )DOF count
@@ -6061,12 +6235,13 @@ sub processENDDOEXEC {
       else { # end of file so close up shop
         displayDebug("No more records in $currentExecRef",2,$currentSubroutine);
         undef $skelExecStatus{$currentExecRef};
-        if ( defined( $DOEXECLocation{$currentExecRef}) )    { undef $DOEXECLocation{$currentExecRef}; }
+        if ( defined( $DOEXECLocation{$currentExecRef}) ) { undef $DOEXECLocation{$currentExecRef}; }
         if ( defined( $skelExecHandle{$currentExecRef}) ) { undef $skelExecHandle{$currentExecRef}; }
         undef $skelExecHandle{$currentExecRef} ;                 # clear out the file handle for the file
         undef $skelExecStatus{$currentExecRef} ;                 # clear out the file status
         undef $ctlLines[$ctlArray{$currentExecRef}];             # clear out the array holding the control cards
         delete $ctlArray{$currentExecRef};                       # clear out the control file reference number
+        close $currentExecRef;                                   # close the file holding the output
         $currentExecFile = pop(@execStack);                      # reinstate the old file name 
         my $removed = unlink($currentExecFile);
         $currentExecRef = pop(@execStack);                       # reinstate the old fileRef
@@ -6102,31 +6277,46 @@ sub processENDDOF {
 
   if ( ( $skelSelSkipCards eq "No" ) && ( $skelDOTSkipCards eq "No" ) ) { # not skipping cards      
   
-    if ( $skelFileStatus{$currentFileRef} == -1) {            # the file was unable to be opened so treat as end of file
-      displayDebug("File $currentFileRef  wasn't opened so treated as EOF.",2,$currentSubroutine);
-      undef $skelFileStatus{$currentFileRef};
-      if ( defined( $DOFLocation{$currentFileRef}) )    { undef $DOFLocation{$currentFileRef}; }
-      if ( defined( $skelFileHandle{$currentFileRef}) ) { undef $skelFileHandle{$currentFileRef}; }
-      if ( defined($ctlArray{$currentFileRef}) ) { undef $ctlLines[$ctlArray{$currentFileRef}]; } # clear out the array holding the control cards
-      undef $skelFileHandle{$currentFileRef} ;                 # clear out the file handle for the file
+    if ( $lastFlagSet ) {                                      # )LAST has sent processing this way so treat as end of file
+      displayDebug(")LAST statement has skipped to )ENDDOF.",2,$currentSubroutine);
       undef $skelFileStatus{$currentFileRef} ;                 # clear out the file status
+      if ( defined( $DOFLocation{$currentFileRef}) )    { undef $DOFLocation{$currentFileRef}; }
+      if ( defined( $skelFileHandle{$currentFileRef}) ) { undef $skelFileHandle{$currentFileRef}; } # clear out the file handle for the file
+      undef $ctlLines[$ctlArray{$currentFileRef}];             # clear out the array holding the control cards
       delete $ctlArray{$currentFileRef};                       # clear out the control file reference number
+      close $currentFileRef;                                   # close the file
+      $currentFileRef = pop(@fileStack);                       # reinstate the old fileRef
+
+      $skelDOFCount--;                                           # decrement )DOF count
+      displayDebug("Processed )ENDDOF. DOF Count = $skelDOFCount",1,$currentSubroutine);
+      verifyControlCounts();
+      $lastFlagSet = 0;    
+    }
+    elsif ( $skelFileStatus{$currentFileRef} == -1) {            # the file was unable to be opened so treat as end of file
+      displayDebug("File $currentFileRef  wasn't opened so treated as EOF.",2,$currentSubroutine);
+      undef $skelFileStatus{$currentFileRef};                                                         # clear out the file status
+      if ( defined( $DOFLocation{$currentFileRef}) )    { undef $DOFLocation{$currentFileRef}; }
+      if ( defined( $skelFileHandle{$currentFileRef}) ) { undef $skelFileHandle{$currentFileRef}; }   # clear out the file handle for the file
+      if ( defined($ctlArray{$currentFileRef}) ) { 
+        undef $ctlLines[$ctlArray{$currentFileRef}];           # clear out the array holding the control cards
+      }
+      delete $ctlArray{$currentFileRef};                       # clear out the control file reference number
+      close $currentFileRef;                                   # close the file
       $currentFileRef = pop(@fileStack);                       # reinstate the old fileRef
 
       $skelDOFCount--;                                           # decrement )DOF count
       displayDebug("Processed )ENDDOF. DOF Count = $skelDOFCount",1,$currentSubroutine);
       verifyControlCounts();
     
-    }
+    } # 
     elsif ( $skelFileStatus{$currentFileRef} == 0 ) {          # file was empty so just treat as end of file
       displayDebug("File $currentFileRef was empty.",2,$currentSubroutine);
-      undef $skelFileStatus{$currentFileRef};
-      if ( defined( $DOFLocation{$currentFileRef}) )    { undef $DOFLocation{$currentFileRef}; }
-      if ( defined( $skelFileHandle{$currentFileRef}) ) { undef $skelFileHandle{$currentFileRef}; }
-      undef $skelFileHandle{$currentFileRef} ;                 # clear out the file handle for the file
       undef $skelFileStatus{$currentFileRef} ;                 # clear out the file status
+      if ( defined( $DOFLocation{$currentFileRef}) )    { undef $DOFLocation{$currentFileRef}; }
+      if ( defined( $skelFileHandle{$currentFileRef}) ) { undef $skelFileHandle{$currentFileRef}; } # clear out the file handle for the file
       undef $ctlLines[$ctlArray{$currentFileRef}];             # clear out the array holding the control cards
       delete $ctlArray{$currentFileRef};                       # clear out the control file reference number
+      close $currentFileRef;                                   # close the file
       $currentFileRef = pop(@fileStack);                       # reinstate the old fileRef
 
       $skelDOFCount--;                                           # decrement )DOF count
@@ -6144,13 +6334,12 @@ sub processENDDOF {
       }
       else { # end of file so close up shop
         displayDebug("No more records in $currentFileRef",2,$currentSubroutine);
-        undef $skelFileStatus{$currentFileRef};
-        if ( defined( $DOFLocation{$currentFileRef}) )    { undef $DOFLocation{$currentFileRef}; }
-        if ( defined( $skelFileHandle{$currentFileRef}) ) { undef $skelFileHandle{$currentFileRef}; }
-        undef $skelFileHandle{$currentFileRef} ;                 # clear out the file handle for the file
         undef $skelFileStatus{$currentFileRef} ;                 # clear out the file status
+        if ( defined( $DOFLocation{$currentFileRef}) )    { undef $DOFLocation{$currentFileRef}; }
+        if ( defined( $skelFileHandle{$currentFileRef}) ) { undef $skelFileHandle{$currentFileRef}; } # clear out the file handle for the file
         undef $ctlLines[$ctlArray{$currentFileRef}];             # clear out the array holding the control cards
         delete $ctlArray{$currentFileRef};                       # clear out the control file reference number
+        close $currentFileRef;                                   # close the file
         $currentFileRef = pop(@fileStack);                       # reinstate the old fileRef
   
         $skelDOFCount--;                                           # decrement )DOF count
@@ -6266,10 +6455,10 @@ sub processTRACE {
 
 sub processDECIMALPLACES {
   # -----------------------------------------------------------
-  # Routine to set the truncatetrailingzeroes flag
+  # Routine to set the decimal places value 
   #
-  # Usage: )TRUNCZEROES [number of decimal places]
-  # Returns: nothing, but sets the truncatetrailingzeroes flag
+  # Usage: )DECIMALPLACES [number of decimal places]
+  # Returns: nothing, but sets the cursorDecimalPlaces value 
   # -----------------------------------------------------------
 
   my $currentSubroutine = 'processDECIMALPLACES';
@@ -6409,7 +6598,7 @@ sub processSKELVERS {
   # -----------------------------------------------------------
   # Routine to process the SKELVERS statemnent. The format of the statement is:
   #
-  # )SKELVERS  $Id: processSkeleton.pm,v 1.83 2018/04/24 02:06:35 db2admin Exp db2admin $
+  # )SKELVERS  $Id: processSkeleton.pm,v 1.87 2018/05/10 23:33:07 db2admin Exp db2admin $
   #
   # Usage: processVERSION(<control card>)
   # Returns: sets the internal variable skelVers
@@ -6669,6 +6858,12 @@ sub processControlCard {
   elsif ( $skelCardType eq ")SBOX" ) {     # SBOX Control Card - generate a formatted input table with check boxes
     processSBOX($card);
   }
+  elsif ( ($skelCardType eq ")LAST" ) || ($skelCardType eq ")LEAVE" ) ) {     # LAST Control Card - skip to the end of the loop
+    processLAST($skelCardType);
+  }
+  elsif ( $skelCardType eq ")NEXT" ) {     # NEXT Control Card - skip to the next loop iteration
+    processLAST($skelCardType);
+  }
   elsif ( $skelCardType eq ")DMP" ) {     # DMP Control Card - generate a file for diwnloading
     processDMP($card);
   }
@@ -6844,7 +7039,7 @@ sub processFUNC {
     }
       
     if ( $varOp ne "=" ) { # assignment must be =
-      displayError("Operator for )FUNC $funcName  must must be '='. Operator found was $varOp",$currentSubroutine);
+      displayError("Operator for )FUNC $funcName must be '='. Operator found was $varOp\nAll functions without a leading variable and functions FORMATSQL, GDATE and JDATE require = ",$currentSubroutine);
       return;
     }
     my $varValue = '';
@@ -7864,7 +8059,4 @@ sub processSkeleton {
 } # end of processSkeleton
 
 1;
-
-
-
 
