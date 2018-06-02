@@ -2,7 +2,7 @@
 # --------------------------------------------------------------------
 # processSkeleton.pm
 #
-# $Id: processSkeleton.pm,v 1.87 2018/05/10 23:33:07 db2admin Exp db2admin $
+# $Id: processSkeleton.pm,v 1.90 2018/05/29 04:38:03 db2admin Exp db2admin $
 #
 # Description:
 # Script to process a skeleton
@@ -31,6 +31,18 @@
 # ChangeLog:
 #
 # $Log: processSkeleton.pm,v $
+# Revision 1.90  2018/05/29 04:38:03  db2admin
+# add in EMPTY and NOT_EMPTY functions to test variables for content
+#
+# Revision 1.89  2018/05/21 05:42:56  db2admin
+# add in )RESETOUTPUT
+# add in message on )STOP statement
+#
+# Revision 1.88  2018/05/21 04:29:51  db2admin
+# add in new commands )STOP and )EXIT
+# )STOP will halt the skeleton immediately
+# )EXIT will either skip to the end of the current imbed or exit the skeleton if no imbed is found
+#
 # Revision 1.87  2018/05/10 23:33:07  db2admin
 # add in )NEXT statement definition to skip tothe next loop iteration
 #
@@ -637,7 +649,7 @@ sub skelVersion {
   # -----------------------------------------------------------
 
   my $currentSubroutine = 'skelVersion'; 
-  my $ID = '$Id: processSkeleton.pm,v 1.87 2018/05/10 23:33:07 db2admin Exp db2admin $';
+  my $ID = '$Id: processSkeleton.pm,v 1.90 2018/05/29 04:38:03 db2admin Exp db2admin $';
   my @V = split(/ /,$ID);
   my $nameStr=$V[1];
   my @N = split(",",$nameStr);
@@ -5107,6 +5119,157 @@ sub processCHECKFORROW {
   return 0;
 } # end of processCHECKFORROW
 
+sub processRESETOUTPUT { 
+  # -----------------------------------------------------------
+  # Routine to process the )RESETOUTPUT card
+  # a )RESETOUTPUT card clears any saved output
+  #
+  # Usage: processRESETOUTPUT(<message>)
+  # Returns: modifies the current saved output
+  # -----------------------------------------------------------
+
+  my $message = shift;             # will hold card type (not the full input card)
+  my $currentSubroutine = 'processRESETOUTPUT';
+  my $tempLine = '';
+
+  if ( ( $skelSelSkipCards eq "No" ) ) { # not excluded because of a failed )SEL
+    if ( ( $skelDOTSkipCards eq "No" ) ) { # not excluded because of a )DOT that returned zero rows
+    
+      # sort out any message ....
+      if ( defined($message) && ( trim($message) ne '' ) ) { # something has been put on the )RESETOUTPUT Card
+        $skelReturnString = $message;
+      }
+      else {  # nothing on the card so just get rid of the output
+        $skelReturnString = '';
+      }
+    }  
+  }
+    
+} # end of processRESETOUTPUT
+
+sub processSTOP { 
+  # -----------------------------------------------------------
+  # Routine to process the )STOP card
+  # a )STOP card terminates the skeleton now
+  #
+  # Usage: processSTOP(<control card>)
+  # Returns: modifies the current card pointer in the skeleton
+  # -----------------------------------------------------------
+
+  my $card = shift;             # will hold card type (not the full input card)
+  my $currentSubroutine = 'processSTOP';
+  my $tempLine = '';
+
+  if ( ( $skelSelSkipCards eq "No" ) ) { # not excluded because of a failed )SEL
+    if ( ( $skelDOTSkipCards eq "No" ) ) { # not excluded because of a )DOT that returned zero rows
+    
+      my @cardParts = split(" ", $card,2);
+      
+      # sort out any message ....
+      if ( defined($cardParts[1]) && ( trim($cardParts[1]) ne '' ) ) { # something has been put on the )STOP Card
+        if ( substr($cardParts[1],0,1) ne '+' ) { # if the string doesn't start with a plus then clear all output
+          $skelReturnString = '';
+        }
+        else {
+          $cardParts[1] = substr($cardParts[1],1);    # lose the first character
+        }
+        
+        $tempLine = substituteVariables($cardParts[1]); 
+        displayDebug("Adding the )STOP comment to the output >$tempLine<",1,$currentSubroutine);
+        outputLine($tempLine);
+      }
+  
+      # check to see if we are in an imbed
+      if ( $#imbedStack > -1 ) { # stuff on the stack to process
+        while ( $#imbedStack > -1 ) { # more imbeds to discard
+          $currentSkelLine = pop(@imbedStack);   # holds the position in the skel of the imbed statement
+          $currentActiveSkel = pop(@imbedStack); # holds the name of the new active skeleton
+          displayDebug("Values pulled from imbedStack: \$currentSkelLine = $currentSkelLine, \$currentActiveSkel = $currentActiveSkel",1,$currentSubroutine);
+          displayDebug(")STOP Continuing to process skeleton $currentActiveSkel",1,$currentSubroutine);
+        }
+        setVariable('currentSkeleton',$currentActiveSkel);         # set the currentSkeleton variable
+      }
+      # at this point the imbed stack is empty and currentActiveSkel should point to the initial skeleton
+      $currentSkelLine = $#{$skelLines[$skelArray{$currentActiveSkel}]};     # set the current line to the last line of the skel 
+      displayDebug("CurrentSkelLine set to $currentSkelLine",1,$currentSubroutine);
+      $skelSELCount = 0;
+      $skelDOTCount = 0;
+    }
+  }
+    
+} # end of processSTOP
+
+sub processEXIT { 
+  # -----------------------------------------------------------
+  # Routine to process the )EXIT card
+  # a )EXIT card terminates the current skeleton or IMBED (but only goes back 1 level)
+  #
+  # Usage: processEXIT(<control card>)
+  # Returns: modifies the current card pointer in the skeleton
+  # -----------------------------------------------------------
+
+  my $card = shift;             # will hold card type (not the full input card)
+  my $currentSubroutine = 'processEXIT';
+  my $UC_cardType; 
+  my @cardParts = ();
+
+  if ( ( $skelSelSkipCards eq "No" ) ) { # not excluded because of a failed )SEL
+    if ( ( $skelDOTSkipCards eq "No" ) ) { # not excluded because of a )DOT that returned zero rows
+
+      # skip to the end of the skeleton adjusting counts as necessary  
+      my $skelLine = $currentSkelLine++;    # point to the next line in the skeleton
+      while ( defined($skelLines[$skelArray{$currentActiveSkel}][$skelLine]) ) { # while there are still lines in the array
+        @cardParts = split(" ", $skelLines[$skelArray{$currentActiveSkel}][$skelLine]); # break the card into pieces
+        $UC_cardType = 'NONESET';
+        if ( defined($cardParts[0]) ) { 
+          $UC_cardType = uc(trim($cardParts[0]));
+        }
+        if ( $UC_cardType eq ')ENDDOF' ) { # check to see if it the matching one
+          $skelDOFCount--;            # adjust the DOF count
+        }
+        elsif ( $UC_cardType eq ')ENDDOT' ) { # check to see if it the matching one
+          $skelDOTCount--;            # adjust the DOT count
+        }
+        elsif ( $UC_cardType eq ')ENDDOEXEC' ) { # check to see if it the matching one
+          $skelDOEXECCount--;            # adjust the DOEXEC count
+        }
+        elsif ( $UC_cardType eq ')SEL' ) { # adjust the SEL count
+          $skelSELCount++;
+        }
+        elsif ( $UC_cardType eq ')ENDSEL' ) { # adjust the SEL count
+          $skelSELCount--;
+        }
+        elsif ( ($UC_cardType eq ')DOT') || ($UC_cardType eq ')XDOT') ) { # adjust the DOT count
+          $skelDOTCount++;
+        }
+        elsif ( $UC_cardType eq ')DOF') { # adjust the DOF count
+          $skelDOFCount++;
+        }
+        elsif ( $UC_cardType eq ')DOEXEC' ) { # adjust the DOEXEC count
+          $skelDOEXECCount++;
+        }
+        $skelLine++;
+      }
+  
+      # at the last line of the current skel - check to see if we are in an imbed
+      if ( $#imbedStack > -1 ) { # stuff on the stack to process
+        $currentSkelLine = pop(@imbedStack);   # holds the position in the skel of the imbed statement
+        $currentSkelLine++;                    # move to line after )IMBED
+        $currentActiveSkel = pop(@imbedStack); # holds the name of the new active skeleton
+        displayDebug("Values pulled from imbedStack: \$currentSkelLine = $currentSkelLine, \$currentActiveSkel = $currentActiveSkel",1,$currentSubroutine);
+        displayDebug(")EXIT Continuing to process skeleton $currentActiveSkel from line $currentSkelLine",1,$currentSubroutine);
+        setVariable('currentSkeleton',$currentActiveSkel);         # set the currentSkeleton variable
+      }
+      else { # not an imbed so treat like )STOP
+        # at this point the imbed stack will beempty and currentActiveSkel should point to the initial skeleton
+        $currentSkelLine = $#{$skelLines[$skelArray{$currentActiveSkel}]};        # set to last line of skel
+        displayDebug("CurrentSkelLine set to $currentSkelLine",1,$currentSubroutine);
+      }
+    }
+  }
+  
+} # end of processEXIT
+
 sub processLAST { 
   # -----------------------------------------------------------
   # Routine to process the )LAST or)LEAVE card
@@ -5529,7 +5692,7 @@ sub processCondition {
   # -----------------------------------------------------------
   # Routine to process condition part of the )SEL, SELELSE or )WHEN card 
   #
-  # It will process the DEFINED, NOT_DEFINED, ROWS_EXIST and NO_ROWS_EXIST 
+  # It will process the DEFINED, NOT_DEFINED, EMPTY, NOT_EMPTY,  ROWS_EXIST and NO_ROWS_EXIST 
   # functions itself but use evaluateCondition to evaluate all other checks
   #
   # Usage: processCondition(<conndition>)
@@ -5556,6 +5719,24 @@ sub processCondition {
       return 0;
     }
     else { # variable is not defined so evaluates true
+      return 1;
+    }
+  }
+  elsif ( uc(substr($card,0,6)) eq "EMPTY(" ) { # special function ....
+    my $tmpVar = substr($card,6,length($card)-7);    # assume that there is a trailing )
+    if ( length($tmpVar) == 0 ) {                # variable has no information in it
+      return 1;
+    }
+    else { # variable contains something
+      return 0;
+    }
+  }
+  elsif ( uc(substr($card,0,10)) eq "NOT_EMPTY(" ) { # special function ....
+    my $tmpVar = substr($card,10,length($card)-11);    # assume that there is a trailing )
+    if ( length($tmpVar) == 0 ) {                # variable has information in it
+      return 0;
+    }
+    else { # variable contains nothing
       return 1;
     }
   }
@@ -6598,7 +6779,7 @@ sub processSKELVERS {
   # -----------------------------------------------------------
   # Routine to process the SKELVERS statemnent. The format of the statement is:
   #
-  # )SKELVERS  $Id: processSkeleton.pm,v 1.87 2018/05/10 23:33:07 db2admin Exp db2admin $
+  # )SKELVERS  $Id: processSkeleton.pm,v 1.90 2018/05/29 04:38:03 db2admin Exp db2admin $
   #
   # Usage: processVERSION(<control card>)
   # Returns: sets the internal variable skelVers
@@ -6864,6 +7045,12 @@ sub processControlCard {
   elsif ( $skelCardType eq ")NEXT" ) {     # NEXT Control Card - skip to the next loop iteration
     processLAST($skelCardType);
   }
+  elsif ( $skelCardType eq ")STOP" ) {     # STOP Control Card - stop all processing and return what has been generated so far
+    processSTOP($card);
+  }
+  elsif ( $skelCardType eq ")EXIT" ) {     # EXIT Control Card - stop all processing in the current skeleton and return to the next higher level
+    processEXIT($skelCardType);
+  }
   elsif ( $skelCardType eq ")DMP" ) {     # DMP Control Card - generate a file for diwnloading
     processDMP($card);
   }
@@ -6991,6 +7178,9 @@ sub processControlCard {
   }
   elsif ( ($skelCardType eq ")SETLEFTJUSTTAB") ) {    # Set the left justified tab stop
     processSETLEFTJUSTTAB(substr($card,15));
+  }
+  elsif ( ($skelCardType eq ")RESETOUTPUT") ) {    # Clear all saved output (doesn't affect STDOUT output)
+    processRESETOUTPUT(substr($card,12));
   }
   elsif ( ($skelCardType eq ")SETRIGHTJUSTTAB") ) {    # Set the right justified tab stop
     processSETRIGHTJUSTTAB(substr($card,16));
@@ -8059,4 +8249,5 @@ sub processSkeleton {
 } # end of processSkeleton
 
 1;
+
 
