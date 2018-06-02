@@ -2,7 +2,7 @@
 # --------------------------------------------------------------------
 # calculator.pm
 #
-# $Id: calculator.pm,v 1.13 2018/03/23 00:10:59 db2admin Exp db2admin $
+# $Id: calculator.pm,v 1.14 2018/05/29 04:22:42 db2admin Exp db2admin $
 #
 # Description:
 # Package to evaluate a infix calculation string
@@ -17,6 +17,9 @@
 #
 # ChangeLog:
 # $Log: calculator.pm,v $
+# Revision 1.14  2018/05/29 04:22:42  db2admin
+# modify code to return an error rather than divide by zero
+#
 # Revision 1.13  2018/03/23 00:10:59  db2admin
 # correct handling of multi character operators
 #
@@ -221,7 +224,7 @@ sub calcVersion {
   # Returns: a string like .... "$name ($Version)  Last Changed on $Changed (UTC)"
   # --------------------------------------------------------------------"
 
-  my $ID = '$Id: calculator.pm,v 1.13 2018/03/23 00:10:59 db2admin Exp db2admin $';
+  my $ID = '$Id: calculator.pm,v 1.14 2018/05/29 04:22:42 db2admin Exp db2admin $';
 
   my @V = split(/ /,$ID);
   my $nameStr=$V[1];
@@ -618,8 +621,16 @@ sub evaluateBinaryOperator {
 
   if ( $operator eq "+" ) { return $op1 + $op2; }       # addition
   elsif ( $operator eq "-" ) { return $op1 - $op2; }    # subtraction
-  elsif ( $operator eq "*" ) { return $op1 * $op2;; }   # multiplication
-  elsif ( $operator eq "/" ) { return $op1 / $op2; }    # division
+  elsif ( $operator eq "*" ) { return $op1 * $op2; }    # multiplication
+  elsif ( $operator eq "/" ) { # division
+    if ( $op2 == 0 ) { 
+      return 0;
+      print STDERR "ERROR: Divisor must not be zero - OP1=$op1, OP2=$op2";
+    }
+    else {
+      return $op1 / $op2; 
+    }
+  }    
   elsif ( ($operator eq ">") || ($operator eq "GT") ) { # greater than
     if ( $op1 > $op2 ) { return 1; }     # true
     else { return 0; }                   # false
