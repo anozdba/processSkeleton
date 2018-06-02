@@ -2,7 +2,7 @@
 # --------------------------------------------------------------------
 # commonFunctions.pm
 #
-# $Id: commonFunctions.pm,v 1.28 2018/04/03 06:14:13 db2admin Exp db2admin $
+# $Id: commonFunctions.pm,v 1.29 2018/05/29 04:30:48 db2admin Exp db2admin $
 #
 # Description:
 # Package cotaining common code.
@@ -169,6 +169,9 @@
 #
 # ChangeLog:
 # $Log: commonFunctions.pm,v $
+# Revision 1.29  2018/05/29 04:30:48  db2admin
+# add in processing to cope with web supplied string parameters containing spaces
+#
 # Revision 1.28  2018/04/03 06:14:13  db2admin
 # adjust getOpt routine to enforce hyphen identification of parameter names where specified
 # .
@@ -564,7 +567,7 @@ sub timeDiff {
 
 sub commonVersion {
 
-  my $ID = '$Id: commonFunctions.pm,v 1.28 2018/04/03 06:14:13 db2admin Exp db2admin $';
+  my $ID = '$Id: commonFunctions.pm,v 1.29 2018/05/29 04:30:48 db2admin Exp db2admin $';
   my @V = split(/ /,$ID);
   my $nameStr=$V[1];
   (my $name,my $x) = split(",",$nameStr);
@@ -679,7 +682,8 @@ sub getOpt {
     print STDERR "[$getOpt_calledBy] No parameters passed\n";
     return 0;
   }
-  
+ 
+  $QUERY_STRING =~ s/%27/\'/g; 
   # Define the variables .....
 
   my $i;
@@ -721,6 +725,14 @@ sub getOpt {
         }
         else { # just a parameter
           $PARGV[$#PARGV + 1] = $ARGV[$i];
+          if ( substr($PARGV[$#PARGV],0,2) eq "\\\'" ) { # if the parameter starts with \'
+            $PARGV[$#PARGV] =~ s/^\\\'//g;  # get rid of the leading characters
+            while ( ( $i <= $#ARGV ) && ( substr($ARGV[$i],-2,2) ne "\\\'" ) ) { # parameter is not terminated with a \'
+              $i++;
+              $PARGV[$#PARGV] .= " " . $ARGV[$i];
+            }
+            $PARGV[$#PARGV] =~ s/\\\'$//g;  # get rid of the trailing characters
+          }
         }
       }
     }
@@ -761,6 +773,14 @@ sub getOpt {
         }
         else { # just a parameter
           $PARGV[$#PARGV + 1] = $QPARGV[$i];
+          if ( substr($PARGV[$#PARGV],0,2) eq "\\\'" ) { # if the parameter starts with \'
+            $PARGV[$#PARGV] =~ s/^\\\'//g;  # get rid of the leading characters
+            while ( ( $i <= $#QPARGV ) && ( substr($QPARGV[$i],-2,2) ne "\\\'" ) ) { # parameter is not terminated with a \'
+              $i++;
+              $PARGV[$#PARGV] .= " " . $QPARGV[$i];
+            }
+            $PARGV[$#PARGV] =~ s/\\\'$//g;  # get rid of the trailing characters
+          }
         }
       }
     }
