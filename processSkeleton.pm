@@ -2,7 +2,7 @@
 # --------------------------------------------------------------------
 # processSkeleton.pm
 #
-# $Id: processSkeleton.pm,v 1.90 2018/05/29 04:38:03 db2admin Exp db2admin $
+# $Id: processSkeleton.pm,v 1.92 2018/06/14 00:04:39 db2admin Exp db2admin $
 #
 # Description:
 # Script to process a skeleton
@@ -31,6 +31,13 @@
 # ChangeLog:
 #
 # $Log: processSkeleton.pm,v $
+# Revision 1.92  2018/06/14 00:04:39  db2admin
+# correct a bug in file name scanning
+#
+# Revision 1.91  2018/06/06 00:11:46  db2admin
+# 1. Add in new )FILE command
+# 2. alter )DOF command to populate DOF_ variables with file information
+#
 # Revision 1.90  2018/05/29 04:38:03  db2admin
 # add in EMPTY and NOT_EMPTY functions to test variables for content
 #
@@ -367,6 +374,7 @@ package processSkeleton;
 use strict;
 use warnings;
 use Data::Dumper qw(Dumper);
+use User::pwent; # for getpwuid and getgrnam
 use commonFunctions qw(commonVersion getOpt myDate trim $getOpt_optName $getOpt_optValue @myDate_ReturnDesc);
 use calculator qw(calcVersion evaluateInfix $calcDebugLevel $calcDebugModules);
 use Exporter;
@@ -649,7 +657,7 @@ sub skelVersion {
   # -----------------------------------------------------------
 
   my $currentSubroutine = 'skelVersion'; 
-  my $ID = '$Id: processSkeleton.pm,v 1.90 2018/05/29 04:38:03 db2admin Exp db2admin $';
+  my $ID = '$Id: processSkeleton.pm,v 1.92 2018/06/14 00:04:39 db2admin Exp db2admin $';
   my @V = split(/ /,$ID);
   my $nameStr=$V[1];
   my @N = split(",",$nameStr);
@@ -1492,6 +1500,101 @@ sub getToken {
   return $tTok;
 
 } # end of getToken
+
+sub getFileInformation {
+  # -----------------------------------------------------------
+  # Gather information about the passed file name
+  #
+  # Will create/update the following variables:
+  #
+  #   {suffix}_mode 
+  #   {suffix}_uid 
+  #   {suffix}_gid
+  #   {suffix}_size
+  #   {suffix}_accessed
+  #   {suffix}_modified 
+  #   {suffix}_chginode
+  #   {suffix}_user
+  #   {suffix}_group
+  #
+  # Usage: getFileInformation(filename,suffix)
+  # Returns: nothing but sets a number of internal variables
+  # -----------------------------------------------------------
+
+  my $currentSubroutine = 'getFileInformation'; 
+  my $file = shift;
+  my $suff = shift;
+  
+  if ( ! defined($suff) ) { $suff = 'DOF' } ;
+  
+  # stat the file  ....
+
+  my ($a, $m, $c) ;
+  my ($dev, $ino, $mode, $nlink, $uid, $gid, $rdev, $size, $atime, $mtime, $ctime, $blksize, $blocks) = stat($file);
+
+  if ( defined($size) ) { # stat worked
+    $a = scalar localtime $atime;
+    $m = scalar localtime $mtime;
+    $c = scalar localtime $ctime;
+  }
+  else { # stat failed
+    $dev = 'Not Found';
+    $ino = 'Not Found';
+    $mode = 'Not Found';
+    $nlink = 'Not Found';
+    $uid = 'Not Found';
+    $gid = 'Not Found';
+    $rdev = 'Not Found';
+    $size = 'Not Found';
+    $blksize = 'Not Found';
+    $blocks = 'Not Found';
+    $atime = 'Not Found';
+    $mtime = 'Not Found';
+    $ctime = 'Not Found';
+    $a = 'Not Found';
+    $m = 'Not Found';
+    $c = 'Not Found';
+  }
+  
+  setVariable($suff . '_mode', $mode);
+  setVariable($suff . '_uid', $uid);
+  setVariable($suff . '_gid', $gid);
+  setVariable($suff . '_size', $size);
+  setVariable($suff . '_accessed', $a);
+  setVariable($suff . '_modified', $m);
+  setVariable($suff . '_chginode', $c);
+
+  if ( $size ne 'Not Found' ) { # stat worked
+    my $userName = '';
+    my $x = getpwuid($uid);
+#print "Ref: " . ref($x) . "\n"; 
+    if ( ref($x) eq 'User::pwent' ) { # an array was returned
+      $userName = $$x[0];
+    }
+    else {
+      $userName = $x;
+    }
+    setVariable($suff . '_user', $userName ) ; 
+    setVariable($suff . '_group', getgrgid($gid));
+  }
+  else {
+    setVariable($suff . '_user', 'Not Found');
+    setVariable($suff . '_group', 'Not Found');
+  }
+  
+  my $directory = '';
+  my $fname = '';
+  if ( $file =~ /[\/\\]/ ) { # it contains one of / or \
+    ($directory, $fname) = ($file =~ /(.*)[\/\\](.*)/);
+  }
+  else {  
+    $fname = $file;
+  }  
+  
+  setVariable($suff . '_directory',$directory);
+  setVariable($suff . '_file',$fname);
+
+} # end of getFileInformation
 
 sub getDate {
   # -----------------------------------------------------------
@@ -5270,6 +5373,29 @@ sub processEXIT {
   
 } # end of processEXIT
 
+sub processFILE { 
+  # -----------------------------------------------------------
+  # Routine to process the )FILE card
+  # a  )FILE card retrieves information about a file
+  #
+  # Usage: processFILE(<control card>)
+  # Returns: nothign but sets a number of internal variables
+  # -----------------------------------------------------------
+
+  my $card = shift;             # will hold card type (not the full input card)
+  my $currentSubroutine = 'processFILE';
+
+  if ( ( $skelSelSkipCards eq "No" ) ) { # not excluded because of a failed )SEL
+    if ( ( $skelDOTSkipCards eq "No" ) ) { # not excluded because of a )DOT that returned zero rows
+    
+      my $filename = getToken($card);       
+      getFileInformation($filename, 'FILE');
+    
+    }
+  }
+  
+} # end of processFILE
+
 sub processLAST { 
   # -----------------------------------------------------------
   # Routine to process the )LAST or)LEAVE card
@@ -6308,6 +6434,7 @@ sub processDOF {
         $skelFileStatus{$fileRef} = -1                               # set flag to indicate open error
       }
       else { # The file does at least exist 
+        getFileInformation($skelDataFullName, 'DOF');                # get file information
         $skelFileStatus{$fileRef} = 0;                               # either it will stay 0 which will mean the file is empty or it will be incremented by readDataFileRecord
         # save the file handle
         $skelFileRecord = readDataFileRecord($skelFileHandle{$fileRef}, $fileRef, 'F');
@@ -6779,7 +6906,7 @@ sub processSKELVERS {
   # -----------------------------------------------------------
   # Routine to process the SKELVERS statemnent. The format of the statement is:
   #
-  # )SKELVERS  $Id: processSkeleton.pm,v 1.90 2018/05/29 04:38:03 db2admin Exp db2admin $
+  # )SKELVERS  $Id: processSkeleton.pm,v 1.92 2018/06/14 00:04:39 db2admin Exp db2admin $
   #
   # Usage: processVERSION(<control card>)
   # Returns: sets the internal variable skelVers
@@ -7178,6 +7305,9 @@ sub processControlCard {
   }
   elsif ( ($skelCardType eq ")SETLEFTJUSTTAB") ) {    # Set the left justified tab stop
     processSETLEFTJUSTTAB(substr($card,15));
+  }
+  elsif ( ($skelCardType eq ")FILE") ) {    # Get file information
+    processFILE($card);
   }
   elsif ( ($skelCardType eq ")RESETOUTPUT") ) {    # Clear all saved output (doesn't affect STDOUT output)
     processRESETOUTPUT(substr($card,12));
