@@ -2,7 +2,7 @@
 # --------------------------------------------------------------------
 # runSkeleton.cgi
 #
-# $Id: runSkeleton.cgi,v 1.2 2018/06/14 05:19:34 db2admin Exp db2admin $
+# $Id: runSkeleton.cgi,v 1.3 2018/06/15 05:26:39 db2admin Exp db2admin $
 #
 # Description:
 # Script to process the skeleton passed as the first parameter
@@ -14,6 +14,9 @@
 #
 # ChangeLog:
 # $Log: runSkeleton.cgi,v $
+# Revision 1.3  2018/06/15 05:26:39  db2admin
+# add in an output type of HTTPDL to allow web downloads
+#
 # Revision 1.2  2018/06/14 05:19:34  db2admin
 # when it looks like the script is acceting input from the web default the
 # outputMode to HTTP
@@ -69,7 +72,7 @@ if ( $QUERY_STRING ne '' ) { $outputMode = 'HTTP' ; } # if the $QUERY_STRING var
 
 # Usage subroutine
 
-my $ID = '$Id: runSkeleton.cgi,v 1.2 2018/06/14 05:19:34 db2admin Exp db2admin $';
+my $ID = '$Id: runSkeleton.cgi,v 1.3 2018/06/15 05:26:39 db2admin Exp db2admin $';
 my @V = split(/ /,$ID);
 my $Version=$V[2];
 my $Changed="$V[3] $V[4]";
@@ -172,6 +175,10 @@ while (<SKELFILE>) {
         $typeOfUse = 'HTTP';
         $outputMode = 'HTTP';
       }   
+      elsif ( " HTTPDL " =~ uc($tou) ) { # Is it a web download?
+        $typeOfUse = 'HTTP';
+        $outputMode = 'HTTPDL';
+      }   
       else {
         $typeOfUse = 'STDOUT';
         $outputMode = 'STDOUT';
@@ -200,6 +207,8 @@ if ( $debugLevel > 0 ) { print STDERR "Parameter string : $parmString\n"; }
 if ( $outputMode eq 'HTTP' ) {
   print "Content-type: text/html\r\n\r\n";
 }
+
+if ( $outputMode eq 'HTTPDL' ) { $outputMode = 'HTTP'; }
 
 # Set parameter defaults
 
