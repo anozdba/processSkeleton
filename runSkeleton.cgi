@@ -2,7 +2,7 @@
 # --------------------------------------------------------------------
 # runSkeleton.cgi
 #
-# $Id: runSkeleton.cgi,v 1.3 2018/06/15 05:26:39 db2admin Exp db2admin $
+# $Id: runSkeleton.cgi,v 1.7 2018/08/08 06:25:05 db2admin Exp db2admin $
 #
 # Description:
 # Script to process the skeleton passed as the first parameter
@@ -14,6 +14,22 @@
 #
 # ChangeLog:
 # $Log: runSkeleton.cgi,v $
+# Revision 1.7  2018/08/08 06:25:05  db2admin
+# add in parameter value checking for the dynamic parameters
+#
+# Revision 1.6  2018/08/07 00:53:51  db2admin
+# restructure the way in which the parameter strings are processed
+# Add in increment feature for flags
+#
+# Revision 1.5  2018/08/06 00:37:50  db2admin
+# add in flag parameter to the skeleton defined parameters to allow the use of flags rather than parameters
+#
+# Revision 1.4  2018/06/18 00:43:45  db2admin
+# add in option to read configuration from a series of default locations:
+# 1. from default.ctl
+# 2. from <skeleton stem>.ctl
+# 3. from the skeleton file
+#
 # Revision 1.3  2018/06/15 05:26:39  db2admin
 # add in an output type of HTTPDL to allow web downloads
 #
@@ -65,6 +81,20 @@ use processSkeleton qw(processSkeleton skelVersion formatSQL $skelDebugLevel $sk
 use commonFunctions qw(getOpt myDate trim $getOpt_optName $getOpt_optValue @myDate_ReturnDesc $myDate_debugLevel $getOpt_diagLevel $getOpt_web $getOpt_calledBy);
 use calculator qw(calcVersion evaluateInfix $calcDebugLevel $calcDebugModules);
 
+# Variables to be used 
+
+my $skeleton;
+my $debugLevel;
+my $readDefaults ;
+my $readSkeleton ;
+my %skelParms;             # parameters obtained from the skeleton
+my %skelParmsValid;        # what type of validation the parameter needs 
+my %skelParmsValue;        # the value of the parameter from the command line
+my %parameterIsFlag = ();  # array indicating if a parameter has values or is just a flag
+my $parmString;
+my $typeOfUse;
+my %DBIParameter;
+
 $getOpt_diagLevel = 0;
 $getOpt_calledBy = $0;
 my $QUERY_STRING = $ENV{'QUERY_STRING'};
@@ -72,7 +102,7 @@ if ( $QUERY_STRING ne '' ) { $outputMode = 'HTTP' ; } # if the $QUERY_STRING var
 
 # Usage subroutine
 
-my $ID = '$Id: runSkeleton.cgi,v 1.3 2018/06/15 05:26:39 db2admin Exp db2admin $';
+my $ID = '$Id: runSkeleton.cgi,v 1.7 2018/08/08 06:25:05 db2admin Exp db2admin $';
 my @V = split(/ /,$ID);
 my $Version=$V[2];
 my $Changed="$V[3] $V[4]";
@@ -93,13 +123,15 @@ sub usage {
     $nl = "";
   }
 
-  print STDERR "Usage: $0 <skeleton> -?hs [-v[v]] [-S] [other parameters as dictated by the skeleton] $nl
+  print STDERR "Usage: $0 <skeleton> -?hs [-x | -X] [-v[v]] [-S] [other parameters as dictated by the skeleton] $nl
   $nl
        Version $Version Last Changed on $Changed (UTC)  $nl
   $nl
        -h or -?           : This help message  $nl
        -s                 : Silent mode (limit displayed output)  $nl
        -S                 : ignores the skeleton parameter and writes all output to STDOUT $nl
+       -x                 : Do NOT read defaults from default.ctl or <skeleton>.ctli (ONLY read from the skeleton file)
+       -X                 : Do NOT read defaults from the skeleton file (ONLY read from the .ctl file - default and skelname)
        -v                 : set debug level  $nl
        <skeleton>         : the skeleton to be processed $nl
        [other parameters] : parameters as specified on \"Input Parameter\" statements in the skeleton $nl
@@ -108,11 +140,95 @@ sub usage {
   $nl
        NOTE: The skeleton name MUST appear before all other parameters but the order of all other $nl
              parameters is generally not important $nl
+             if -x and -X are set then no run time parameters will be read from files
   $nl ";
 }
 
 my $today;           # today's date in YYYMMDD format
 my $yesterday_date;  # yesterday's date in YYYY-MM-DD format
+
+sub checkDate {
+  # ------------------------------------------------------------------------------
+  # Check thatthe supplied string matches the date mask
+  #
+  # Valid masks are:
+  #
+  #     YYYYMMDD 
+  #     YYYY.MM.DD    - the . can be any character but will be modified to - on return
+  #     YYMMDD
+  #     YY.MM.DD      - the . can be any character but will be modified to - on return
+  #     DDMMYY
+  #     DD.MM.YY      - the . can be any character but will be modified to - on return
+  #
+  # Returns blank if there is no match or adjusted date if it is valid
+  # ------------------------------------------------------------------------------
+
+  my $mask = uc(shift);
+  my $testString = shift;
+  my $yr;
+  my $mn;
+  my $dy;
+
+  if ( length($mask) != length($testString) ) { # the lengths must be identical in length
+    return '';
+  }
+  
+  if ( 'YYMMDD DDMMYY YY.MM.DD DD.MM.YY' =~ $mask ) { # short form year check
+    if ( $mask eq 'YYMMDD' ) { ($yr,$mn,$dy) = ( $testString =~ /(..)(..)(..)/ ) ; }
+    elsif ( $mask eq 'YY.MM.DD' ) { ($yr,$mn,$dy) = ( $testString =~ /(..).(..).(..)/ ) ; }
+    elsif ( $mask eq 'DDMMYY' ) { ($dy,$mn,$yr) = ( $testString =~ /(..)(..)(..)/ ) ; }
+    elsif ( $mask eq 'DD.MM.YY' ) { ($dy,$mn,$yr) = ( $testString =~ /(..).(..).(..)/ ) ; }
+
+    # do the tests ....
+
+    my @dateReturn = myDate("Date:20$yr$mn$dy");
+    if ( $dateReturn[12] ne '' ) { # there was an issue .....
+      print STDERR "$dateReturn[12]\n";
+      return '';
+    }
+    else {
+      if ( length($mask) == 6 ) { # no separators so just send back the original string
+        return $testString;
+      }
+      else {
+        if ( substr($mask,0,2) eq 'YY' ) {
+          return "$yr-$mn-$dy";
+        }
+        else {
+          return "$dy-$mn-$yr";
+        }
+      }
+    }
+  }
+  elsif ( 'YYYYMMDD DDMMYYYY YYYY.MM.DD DD.MM.YYYY' =~ $mask ) { # long form year check
+    if ( $mask eq 'YYYYMMDD' ) { ($yr,$mn,$dy) = ( $testString =~ /(....)(..)(..)/ ) ; }
+    elsif ( $mask eq 'YYYY.MM.DD' ) { ($yr,$mn,$dy) = ( $testString =~ /(....).(..).(..)/ ) ; }
+    elsif ( $mask eq 'DDMMYYYY' ) { ($dy,$mn,$yr) = ( $testString =~ /(..)(..)(....)/ ) ; }
+    elsif ( $mask eq 'DD.MM.YYYY' ) { ($dy,$mn,$yr) = ( $testString =~ /(..).(..).(....)/ ) ; }
+
+    # do the tests ....
+
+    my @dateReturn = myDate("Date:$yr$mn$dy");
+    if ( $dateReturn[12] ne '' ) { # there was an issue .....
+      print STDERR "$dateReturn[12]\n";
+      return '';
+    }
+    else {
+      if ( length($mask) == 8 ) { # no separators so just send back the original string
+        return $testString;
+      }
+      else {
+        if ( substr($mask,0,2) eq 'YY' ) {
+          return "$yr-$mn-$dy";
+        }
+        else {
+          return "$dy-$mn-$yr";
+        }
+      }
+    }
+  }
+
+}
 
 sub generateDates {
 
@@ -134,6 +250,67 @@ sub generateDates {
   $yesterday_date = "$Y[2]-$Y[1]-$Y[0]";
 }
 
+sub setSkelOptions {
+
+  # Gather the skeleton options from the supplied file handle
+
+  my $fileHandle = shift; 
+  my $file = shift; 
+
+  while (<$fileHandle>) {
+    if ( $_ =~ /End.*Control Information/ ) { last; } # indicates that no further control information in file so finish
+    if ( uc(substr($_,0,3)) eq ")CM" ) { # it is a comment so may be a driver parameter
+      if ( $_ =~ /Input Parameter/ ) { # input parameter ....
+        my ($prm, $var, $valid) = ( $_ =~ /Input Parameter: \((.*)\)\s*(\S*)\s*(\S*)/ );
+        $parmString .= "$prm:";
+        $skelParms{$prm} = $var;
+        $skelParmsValid{$prm} = $valid;
+        if ( $debugLevel > 0 ) { print STDERR "From File ($file): Parm $prm read in and assigned to $var\n"; }
+      }
+      elsif ( $_ =~ /Input Flag/ ) { # input flag .... sets a boolean value
+        # of the form: Input Flag: (v) debugLevel
+        my ($prm, $var, $valid) = ( $_ =~ /Input Flag: \((.*)\)\s*(\S*)\s*(\S*)/ );
+        if ( $var eq '' ) { print "Format of the parameter should be : 'Input Flag: (v) debugLevel'\n"; }
+        else {
+          $parmString .= "$prm";
+          $skelParms{$prm} = $var;
+          $skelParmsValid{$prm} = $valid;
+          $parameterIsFlag{$prm} = 1;
+          if ( $debugLevel > 0 ) { print STDERR "From File ($file): Flag $prm read in and assigned to $var\n"; }
+        }
+      }
+      elsif ( $_ =~ /Type of use/ ) { # type of output
+        my ($tou) = ( $_ =~ /Type of use:\s*(\S*)/ );
+        if ( " WEB HTTP " =~ uc($tou) ) { # does it require web related output?
+          $typeOfUse = 'HTTP';
+          $outputMode = 'HTTP';
+        }
+        elsif ( " HTTPDL " =~ uc($tou) ) { # Is it a web download?
+          $typeOfUse = 'HTTP';
+          $outputMode = 'HTTPDL';
+        }
+        else {
+          $typeOfUse = 'STDOUT';
+          $outputMode = 'STDOUT';
+        }
+        if ( $debugLevel > 0 ) { print STDERR "From File ($file): Type of use is $typeOfUse\n"; }
+      }
+      elsif ( $_ =~ /Requires DBI/ ) { # type of output
+        my ($DBIPrm) = ( $_ =~ /Requires DBI:\s*(\S*)/ );
+        if ( defined($DBIPrm) ) { # DBI required
+          $DBIModule = $DBIPrm;
+        }
+        if ( $debugLevel > 0 ) { print STDERR "From File ($file): DBI Module required: $DBIModule\n";  }
+      }
+      elsif ( $_ =~ /DBI Parameter/ ) { # type of output
+        my ($prm, $var) = ( $_ =~ /DBI Parameter : \((.*)\)\s*(\S*)/ );
+        $DBIParameter{$prm} = $var;
+        if ( $debugLevel > 0 ) { print STDERR "From File ($file): DBI Parm $var read in and assigned to $prm\n"; }
+      }
+    }
+  }
+} # end of setSkelOptions
+
 # before it goes too far check to see what is in the skeleton (and check that a valid skeleton has been passed)
 
 if ( $#ARGV == -1 ) { # MUST have at least 1 parameter
@@ -141,66 +318,61 @@ if ( $#ARGV == -1 ) { # MUST have at least 1 parameter
   exit;
 }
 
-if ( ! open( SKELFILE, "<", $ARGV[0] ) ) { # file not able to be read
-  my $lastcc = $!;
-  usage("Unable to open file $ARGV[0]\nError: $lastcc\n");
-  exit;
-}
+my $confFile;
 
 # save the skeleton name
-my $skeleton = $ARGV[0];
-my $debugLevel = 0;
-# do a quick check to see if debug mode will be set later
+$skeleton = $ARGV[0];
+$debugLevel = 0;
+$readDefaults = 1;
+$readSkeleton = 1;
+# do a quick check to see if debug mode or ignore defaults will be set later
 for ( my $i = 0 ; $i <= $#ARGV ; $i++ ) { 
-  if ( $ARGV[$i] =~ /^-.*v/ ) { $debugLevel = 1 ; last; } # a debug parameter is set
+  if ( $ARGV[$i] =~ /^-.*v/ ) { $debugLevel = 1 ; } # a debug parameter is set
+  if ( $ARGV[$i] =~ /^-.*x/ ) { $readDefaults = 0 ; } # dont read defaults is set
+  if ( $ARGV[$i] =~ /^-.*X/ ) { $readSkeleton = 0 ; } # dont read defaults is set
 }
-my %skelParms = ();
-my $parmString = ":h?sSvV:";
-my $typeOfUse = 'STDOUT';
+%skelParms = ();
+%skelParmsValid = ();
+%skelParmsValue = ();
+$parmString = ":h?sSvV:xX";
+$typeOfUse = 'STDOUT';
 $DBIModule = '';
-my %DBIParameter = ();
+%DBIParameter = ();
+my $stem = $skeleton;
+$stem =~ s/\..*?$//g ; 
 
-while (<SKELFILE>) { 
-  if ( $_ =~ /End.*Control Information/ ) { last; } # indicates that no further control information in file so finish
-  if ( uc(substr($_,0,3)) eq ")CM" ) { # it is a comment so may be a driver parameter
-    if ( $_ =~ /Input Parameter/ ) { # input parameter ....
-      my ($prm, $var) = ( $_ =~ /Input Parameter: \((.*)\)\s*(\S*)/ );
-      $parmString .= "$prm:";
-      $skelParms{$prm} = $var;
-      if ( $debugLevel > 0 ) { print STDERR "From Skeleton ($skeleton): Parm $prm read in and assigned to $var\n"; }
+if ( $readDefaults ) { # look for default config files and initialise with the values found there
+  if ( -f "default.ctl" ) { # file exists .....
+    if ( ! open( $confFile, "<", "default.ctl" ) ) { # unable to read file 
+      my $lastcc = $!;
+      usage("Unable to open file $ARGV[0]\nError: $lastcc\n");
+      exit;
     }
-    elsif ( $_ =~ /Type of use/ ) { # type of output
-      my ($tou) = ( $_ =~ /Type of use:\s*(\S*)/ );
-      if ( " WEB HTTP " =~ uc($tou) ) { # does it require web related output?
-        $typeOfUse = 'HTTP';
-        $outputMode = 'HTTP';
-      }   
-      elsif ( " HTTPDL " =~ uc($tou) ) { # Is it a web download?
-        $typeOfUse = 'HTTP';
-        $outputMode = 'HTTPDL';
-      }   
-      else {
-        $typeOfUse = 'STDOUT';
-        $outputMode = 'STDOUT';
-      }
-      if ( $debugLevel > 0 ) { print STDERR "From Skeleton ($skeleton): Type of use is $typeOfUse\n"; }
+    setSkelOptions($confFile, "default.ctl") ;
+    close $confFile;
+  }
+  if ( -f "$stem.ctl" ) { # file exists .....
+    if ( ! open( $confFile, "<", "$stem.ctl" ) ) { # unable to read file 
+      my $lastcc = $!;
+      usage("Unable to open file $ARGV[0]\nError: $lastcc\n");
+      exit;
     }
-    elsif ( $_ =~ /Requires DBI/ ) { # type of output
-      my ($DBIPrm) = ( $_ =~ /Requires DBI:\s*(\S*)/ );
-      if ( defined($DBIPrm) ) { # DBI required
-        $DBIModule = $DBIPrm;
-      }
-      if ( $debugLevel > 0 ) { print STDERR "From Skeleton ($skeleton): DBI Module required: $DBIModule\n";  }
-    }
-    elsif ( $_ =~ /DBI Parameter/ ) { # type of output
-      my ($prm, $var) = ( $_ =~ /DBI Parameter : \((.*)\)\s*(\S*)/ );
-      $DBIParameter{$prm} = $var;
-      if ( $debugLevel > 0 ) { print STDERR "From Skeleton ($skeleton): DBI Parm $var read in and assigned to $prm\n"; }
-    }
+    setSkelOptions($confFile, "$stem.ctl") ;
+    close $confFile;
   }
 }
 
-close SKELFILE;
+if ( $readSkeleton ) { # look for config initialisation values in the skeleton
+  if ( ! open( $confFile, "<", $ARGV[0] ) ) { # file not able to be read
+    my $lastcc = $!;
+    usage("Unable to open file $ARGV[0]\nError: $lastcc\n");
+    exit;
+  }
+
+  setSkelOptions($confFile, $skeleton) ;
+
+  close $confFile;
+}
 
 if ( $debugLevel > 0 ) { print STDERR "Parameter string : $parmString\n"; }
 
@@ -235,6 +407,14 @@ while ( getOpt($parmString) ) {
  elsif ( $getOpt_optName eq "s" )  {
    $silent = "Yes";
  }
+ elsif ( $getOpt_optName eq "x" )  {
+   $readDefaults = 0;
+   if ( $silent ne "Yes" ) { print STDERR "Defaults will not be read from default file (default.ctl) or the skeleton ctl file ($stem.ctl)\n"; }
+ }
+ elsif ( $getOpt_optName eq "X" )  {
+   $readSkeleton = 0;
+   if ( $silent ne "Yes" ) { print STDERR "Defaults config will not be read from the skeleton file ($skeleton)\n"; }
+ }
  elsif ( $getOpt_optName eq "S" )  {
    $outputMode = 'STDOUT';
    if ( $silent ne "Yes" ) { print STDERR "Output will be formatted for a terminal\n"; }
@@ -243,11 +423,13 @@ while ( getOpt($parmString) ) {
    $skelDebugLevel++;
    $calcDebugLevel++;
    $debugLevel++;
-   if ( $skelParameters eq '' ) { 
-     $skelParameters = 'SKL_SHOWSQL=YES';
-   }
-   else {
-     $skelParameters .= ',SKL_SHOWSQL=YES';
+   if ( $skelDebugLevel == 1) { # only set the parameter once
+     if ( $skelParameters eq '' ) { 
+       $skelParameters = 'SKL_SHOWSQL=YES';
+     }
+     else {
+       $skelParameters .= ',SKL_SHOWSQL=YES';
+     }
    }
    if ( $silent ne "Yes" ) { print STDERR "Debug level now set to $debugLevel\n"; }
    # print out the arguments ......
@@ -270,13 +452,43 @@ while ( getOpt($parmString) ) {
  }
  # Parameters beyond here will be dynamically added via the skeleton
  elsif ( defined( $skelParms{$getOpt_optName} ) ) { # it was defined in the skeleton
-   if ( $skelParameters eq '' ) { 
-     $skelParameters = "$skelParms{$getOpt_optName}=$getOpt_optValue";
+   if ( defined($parameterIsFlag{$getOpt_optName}) ) { # parameter was defined as a flag ( so just boolean)
+     if ( uc($skelParmsValid{$getOpt_optName}) eq 'ADD' ) { # increment the current value
+       if ( defined($skelParmsValue{$getOpt_optName}) ) { # the value exists (and so should be 1
+         $skelParmsValue{$getOpt_optName}++;
+       }
+       else { # need to define the first time
+         $skelParmsValue{$getOpt_optName} = 1;
+       }
+     }
+     else { # it isn't add so just set it to 1
+       $skelParmsValue{$getOpt_optName} = 1;
+     }
    }
-   else {
-     $skelParameters .= ",$skelParms{$getOpt_optName}=$getOpt_optValue";
+   else { # it is not a flag so just store the parameter
+     if ( ($skelParmsValid{$getOpt_optName}) eq  'NUM' ) { # check to make sure the parm is numeric
+       if ( ($getOpt_optValue * 1) != $getOpt_optValue ) { # mustn't be a numeric!
+         usage ("Value for $getOpt_optName MUST be numeric (value=$getOpt_optValue)");
+         exit;
+       }
+       else {
+         $skelParmsValue{$getOpt_optName} = $getOpt_optValue;
+       }
+     }
+     elsif ( ($skelParmsValid{$getOpt_optName} ne '' ) && (" YYMMDD DDMMYY YY.MM.DD DD.MM.YY YYYYMMDD DDMMYYYY YYYY.MM.DD DD.MM.YYYY " =~ uc($skelParmsValid{$getOpt_optName})) ) { # check to make sure the parm is a date
+       $getOpt_optValue = checkDate(uc($skelParmsValid{$getOpt_optName}), $getOpt_optValue);
+       if ( $getOpt_optValue eq '' ) { # failed check
+         usage ("Value for $getOpt_optName MUST be in the format " . uc($skelParmsValid{$getOpt_optName}) . " - it was $getOpt_optValue");
+         exit;
+       }
+       else {
+         $skelParmsValue{$getOpt_optName} = $getOpt_optValue;
+       }
+     }
+     else { # no recognised test to do
+       $skelParmsValue{$getOpt_optName} = $getOpt_optValue;
+     }
    }
-   if ( $debugLevel > 0 ) { print STDERR "Skeleton Parameter: $skelParameters\n"; }
  }
  elsif ( $getOpt_optName eq ":" ) {
    usage ("Parameter $getOpt_optValue requires a parameter");
@@ -292,6 +504,18 @@ while ( getOpt($parmString) ) {
    }
  }
 }
+
+# flesh out the skelParameters with dynamically created parameters
+
+foreach my $key (keys %skelParmsValue) {
+  if ( $skelParameters eq '' ) {
+    $skelParameters = "$skelParms{$key}=$skelParmsValue{$key}";
+  }
+  else {
+    $skelParameters .= ",$skelParms{$key}=$skelParmsValue{$key}";
+  }
+}
+if ( $debugLevel > 0 ) { print STDERR "Skeleton Parameter: $skelParameters\n"; }
 
 # ----------------------------------------------------
 # -- End of Parameter Section
