@@ -2,7 +2,7 @@
 # --------------------------------------------------------------------
 # processSkeleton.pm
 #
-# $Id: processSkeleton.pm,v 1.103 2018/08/27 04:17:47 db2admin Exp db2admin $
+# $Id: processSkeleton.pm,v 1.108 2018/10/10 02:30:03 db2admin Exp db2admin $
 #
 # Description:
 # Script to process a skeleton
@@ -34,6 +34,27 @@
 # add inline CTL cards to the )DOF statement
 #
 # $Log: processSkeleton.pm,v $
+# Revision 1.108  2018/10/10 02:30:03  db2admin
+# correct bug in assign
+#
+# Revision 1.107  2018/10/10 02:27:05  db2admin
+# create a synonym for ASET called ASSIGN
+#
+# Revision 1.106  2018/10/09 21:43:52  db2admin
+# A couple of changes:
+# 1. Added in a new statement )ASET. Same as )SET but no statement evaluation is done
+# 2. Corrected issued with a variable being preceded by a backslash
+#
+# Revision 1.105  2018/10/09 03:04:19  db2admin
+# 1. add in new SPLIT function
+# )FUNC SPLIT x = "string" "delimiter" <element to return> <max elements>
+# 2. Modify INSTR function to include start pos or Occurence
+# )FUNX INSTR x = 'string to search for> <string to search in> [<start pos>|OCC:<occurence>]
+#
+# Revision 1.104  2018/09/06 08:27:04  db2admin
+# 1. Correct an issue looping in DOF definitions when wrong control type entered
+# 2. Allow regex control characters to be entered as delimiters in CTL records
+#
 # Revision 1.103  2018/08/27 04:17:47  db2admin
 # correct bug in variable substitution
 #
@@ -695,7 +716,7 @@ sub skelVersion {
   # -----------------------------------------------------------
 
   my $currentSubroutine = 'skelVersion'; 
-  my $ID = '$Id: processSkeleton.pm,v 1.103 2018/08/27 04:17:47 db2admin Exp db2admin $';
+  my $ID = '$Id: processSkeleton.pm,v 1.108 2018/10/10 02:30:03 db2admin Exp db2admin $';
   my @V = split(/ /,$ID);
   my $nameStr=$V[1];
   my @N = split(",",$nameStr);
@@ -1955,17 +1976,33 @@ sub substituteVariables {
 
       # check if the : is preceded by a backslash (in which case it is NOT a variable)
       if ( $i > 1 ) {                                # cant have a cursor ref it is less than 1
-        if ( substr($inputString,$i-1,1) eq '\\' ) { # the : is being escaped
-          displayDebug("Colon will not be treated as a variable as it is escaped \$linepos=$linePos, \$i: $i" . ",char=" . substr($inputString,$i-1,1),1,$currentSubroutine);
-          $convString .= substr($inputString, $leftEdge, $fieldStart - $leftEdge - 1) . ":";   # just move across the text from the end of the last field to just after the ':' character
-          $leftEdge = $linePos;                      # Reset the leftedge to be just after the ':' character just worked with
-          if ( index($inputString,':',$leftEdge) == -1 ) {                             # no more colons in the string
-            $linePos = -1;                                                             # set line position off    
-            $convString .= substr($inputString, $fieldStart+1);                        # copy across the remaining string bit
-            displayDebug("No more \: to process in input string",3,$currentSubroutine);
-            last;                                                                      # leave the while loop as nothing more to process
+        # processSkeleton only allows the escaping of a : character or in the event that a \ validly precedes a : then that single \ can be escaped
+        # this means that the only situations that can arise are:
+        #    1. test\:VAR meaning test:VAR (no variable substitution)
+        #    2. test\\:VAR meaning test\:VAR (variable substitution)A
+        #    3. test:VAR meaning test:VAR (variable substitution)
+        if ( substr($inputString,$i-1,1) eq '\\' ) { # May be case 1 or case 2
+          if ( substr($inputString,$i-2,2) eq '\\\\' ) { # it is case 2
+            # we just need to remove one of the \s and then treat as a normal variable substitution
+            displayDebug("Colon will be treated as a variable as it is not escaped \$linepos=$linePos, \$i: $i" . ",char=" . substr($inputString,$i-1,1),1,$currentSubroutine);
+            my $tmpString = substr($inputString, 0, $i-1) . substr($inputString, $i);   # just move the string left 1 char
+            $inputString = $tmpString;
+            $i--;              # adjust the pointer to the colon
+            $fieldStart = $i;  # adjust the start of the field being tested
+            $linePos = $i + 1; # adjust the start of the variable name
           }
-          next;
+          else { # the : is being escaped and so isn't a variable indicator (case 1)
+            displayDebug("Colon will not be treated as a variable as it is escaped \$linepos=$linePos, \$i: $i" . ",char=" . substr($inputString,$i-1,1),1,$currentSubroutine);
+            $convString .= substr($inputString, $leftEdge, $fieldStart - $leftEdge - 1) . ":";   # just move across the text from the end of the last field to just after the ':' character
+            $leftEdge = $linePos;                      # Reset the leftedge to be just after the ':' character just worked with
+            if ( index($inputString,':',$leftEdge) == -1 ) {                             # no more colons in the string
+              $linePos = -1;                                                             # set line position off    
+              $convString .= substr($inputString, $fieldStart+1);                        # copy across the remaining string bit
+              displayDebug("No more \: to process in input string",3,$currentSubroutine);
+              last;                                                                      # leave the while loop as nothing more to process
+            }
+            next;
+          }
         }
       }
       
@@ -2718,7 +2755,7 @@ sub displayDataHorizontally {
     my $delimiter = substr($ctlCard,0,1);                                     # first char is the delimiter
     
     # break the preparse ctl line into it's parts (maximum of 8 parts)
-    my ($delNull,$delimType,$fldName, $fldStart, $fldLen, $condStart, $condLen, $condValue) = split ($delimiter,$ctlCard,8); 
+    my ($delNull,$delimType,$fldName, $fldStart, $fldLen, $condStart, $condLen, $condValue) = split (/[$delimiter]/,$ctlCard,8); 
     displayDebug("delimType is $delimType, fldName is $fldName, fldStart is $fldStart, fldLen is $fldLen, condStart is >$condStart<",1,$currentSubroutine);
     
     if ( uc($delimType) eq "DELIMITED" ) {                                     # it is a delimited control record .... split up the data record to save time
@@ -2903,7 +2940,7 @@ sub processPARSE {
           my $delimiter = substr($ctlCard,0,1);                       # first char is the delimiter
     
           # break the preparse ctl line into it's parts (maximum of 8 parts)
-          my ($delNull,$delimType,$fldName, $fldStart, $fldLen, $condStart, $condLen, $condValue) = split ($delimiter,$ctlCard,8);  # at this point only concerned about field name
+          my ($delNull,$delimType,$fldName, $fldStart, $fldLen, $condStart, $condLen, $condValue) = split (/[$delimiter]/,$ctlCard,8);  # at this point only concerned about field name
             
         }
           
@@ -3044,7 +3081,7 @@ sub processFDOF {
             my $delimiter = substr($ctlCard,0,1);                       # first char is the delimiter
     
             # break the preparse ctl line into it's parts (maximum of 8 parts)
-            my ($delNull,$delimType,$fldName, $fldStart, $fldLen, $condStart, $condLen, $condValue) = split ($delimiter,$ctlCard,8);  # at this point only concerned about field name
+            my ($delNull,$delimType,$fldName, $fldStart, $fldLen, $condStart, $condLen, $condValue) = split (/[$delimiter]/,$ctlCard,8);  # at this point only concerned about field name
             
             if ( $outputMode eq "HTTP" ) {  # output it as a html table
               outputLine("<th>" . $fldName . "</th>");
@@ -6173,6 +6210,36 @@ sub processENDSEL {
   }
 } # end of processENDSEL
 
+sub processASET { 
+  # -----------------------------------------------------------
+  # Routine to process the )ASET card
+  # a )ASET is of the form:    )SET <var> = <value>
+  #   Note: the var does not have a preceding :
+  #
+  # Usage: processASET(<control card>)
+  # Returns: sets a variable value (it does no evaluation)
+  # -----------------------------------------------------------
+  
+  my $currentSubroutine = 'processASET';
+  
+  my $card = shift;                    # get the card information
+  if ( ( $skelSelSkipCards eq "No" ) && ( $skelDOTSkipCards eq "No" ) ) { # not skipping cards
+    my ( $varName, $varOp, $varValue ) = ( $card =~ /.*? ([^=]*)(=)(.*)/ ) ; 
+    if ( ! defined($varOp) ) { # check if it is an equals sign (if it is not defined then an = was not found)
+      displayError("Operator for )ASET must be '='.",$currentSubroutine);
+      return;
+    }
+    displayDebug("\)ASET string is " . substr($card,$currentLinePosition),1,$currentSubroutine);
+    $varName = trim($varName);
+    $varValue = substituteVariables(trim($varValue));
+    displayDebug("Value is = $varValue",1,$currentSubroutine);
+    setVariable($varName,$varValue);    # set the variable
+  }
+  else { # skip this card
+    displayDebug("Skipped: $card. Sel Count = $skelSELCount, SEL Resume Level = $skelSEL_resumeLevel",2,$currentSubroutine);
+  }  
+} # end of processASet
+
 sub processSET { 
   # -----------------------------------------------------------
   # Routine to process the )SET card
@@ -7059,7 +7126,7 @@ sub processSKELVERS {
   # -----------------------------------------------------------
   # Routine to process the SKELVERS statemnent. The format of the statement is:
   #
-  # )SKELVERS  $Id: processSkeleton.pm,v 1.103 2018/08/27 04:17:47 db2admin Exp db2admin $
+  # )SKELVERS  $Id: processSkeleton.pm,v 1.108 2018/10/10 02:30:03 db2admin Exp db2admin $
   #
   # Usage: processVERSION(<control card>)
   # Returns: sets the internal variable skelVers
@@ -7295,8 +7362,11 @@ sub processControlCard {
       displayDebug("Skipped: $card",2,$currentSubroutine);
     }
   }
-  elsif ( $skelCardType eq ")SET" ) {      # SET control card - assign a value to a skeleton variable
+  elsif ( $skelCardType eq ")SET" ) {      # SET control card - assign a value to a skeleton variable (do any computations before assignment)
     processSET($card);
+  }
+  elsif ( ($skelCardType eq ")ASET" ) || ($skelCardType eq ")ASSIGN" ) ) {     # ASET/ASSIGN control card - assign a value to a skeleton variable (do NO computation)
+    processASET($card);
   }
   elsif ( $skelCardType eq ")LOGOFF" ) {   # LOGOFF control Card - Close a connection to a database - of the form )LOGOFF connRef
     processLOGOFF($card);
@@ -7542,8 +7612,10 @@ sub processFunction {
   #     LTRIM            - remove leading whitespace from a string
   #     RTRIM            - remove trailing whitespace from a string
   #     LEN              - return the length of the supplied parameter
+  #     SPLIT            - returns the xth value in the string delimted by the supplied delimiter ('' if not found)
+  #                        )FUNC SPLIT RET = <string to split> <string to be split on> [<entry to return>]
   #     INSTR            - returns the position of one string in another (-1 if not found)
-  #                        )FUNC INSTR RET = <string to search for> <string to be searched>
+  #                        )FUNC INSTR RET = <string to search for> <string to be searched> [<start pos|OCC:occurence>]
   #     LEFT             - return a number of characters from the left hand side of a string
   #     RIGHT            - return a number of characters from the right hand side of a string
   #     MID              - return a number of characters from the middle of a a string
@@ -7649,6 +7721,7 @@ sub processFunction {
   elsif ( uc($function) eq "INSTR" ) { # instr function
     my $srchString = getToken($card);                       # search string
     my $baseString = getToken($card);                       # string to be searched
+    my $thirdParm = getToken($card);                        # third parameter ; either starting pos or OCCxxx where then it becomes the string occurence
     
     if ( ($srchString =~ /^'/) || ($srchString =~ /^"/) ) {     # it is a quoted string ....
       $srchString = substr($srchString,1,length($srchString)-2); # strip off the quotes
@@ -7658,14 +7731,39 @@ sub processFunction {
       $baseString = substr($baseString,1,length($baseString)-2); # strip off the quotes
     }
     
-    # INSTR MUST have 2 parms 
+    # INSTR MUST have at least 2 parms 
     
     if ( $baseString eq "" ) { # 2 parameters haven't been supplied
-      displayError("INSTR function format is:\n)FUNC INSTR xxx = <search string> <string>\nNote: It MUST have 2 parameters - Function will return -1",$currentSubroutine);
+      displayError("INSTR function format is:\n)FUNC INSTR xxx = <search string> <string> [startpos|OCC:occurence]\nNote: It MUST have 2 parameters - Function will return -1",$currentSubroutine);
       return -1;
     }
-    
-    displayDebug("srchString=$srchString, baseString=$baseString, index is " . index($baseString,$srchString),2,$currentSubroutine);
+	
+    if ( $thirdParm eq '' ) { $thirdParm = 0 } # set a default value of zero for the third parm
+    elsif ( ! isNumeric($thirdParm) ) { # parameter is not numeric so may be occurence 
+      if ( uc(substr( $thirdParm . "   ", 0,4)) eq "OCC:" ) { # check if we are looking for an occurence value
+        my $occ = substr($thirdParm,4);
+        if ( ! isNumeric($occ) ) {
+          displayError("INSTR function format is:\n)FUNC INSTR xxx = <search string> <string> [startpos|OCC:occurence]\nNote: Third parm must be either numeric or start with OCC: - 3rd parm will be assumed 1",$currentSubroutine);
+          $thirdParm = 0;
+        }
+        else { # we need to find an occurence of the string
+          my $spot = index($baseString,$srchString,0); # first occurence
+          my $occCount = 1;
+          while ( ($occCount < $occ) & ( $spot > -1 ) ) { # still more searching to do
+	    $spot = index($baseString,$srchString,$spot+1); # find the next entry
+  	    $occCount++;
+	  }
+	  return $spot; # return the last location found
+  	}
+      }
+      else { # not numeric and not OCC: so ignore it
+        displayError("INSTR function format is:\n)FUNC INSTR xxx = <search string> <string> [startpos|OCC:occurence]\nNote: Third parm must be either numeric or start with OCC: - 3rd parm will be assumed 0",$currentSubroutine);
+        $thirdParm = 0;
+      }
+    }
+    else {
+      displayDebug("srchString=$srchString, baseString=$baseString, index is " . index($baseString,$srchString,$thirdParm),2,$currentSubroutine);
+    }
 
     if ( $srchString =~ /^SPC\d*.*/ ) {                           # convert to a space filled string of length xxx where xxx is a literal of the form SPCxxx
       my ($numSpaces) = ( $srchString =~ /^SPC(\d*)[^\d]*/ ) ;
@@ -7675,8 +7773,58 @@ sub processFunction {
     
     displayDebug("srchString=$srchString, baseString=$baseString, index is " . index($baseString,$srchString),2,$currentSubroutine);
 
-    return index($baseString,$srchString);
+    return index($baseString,$srchString,$thirdParm);
   }  # end of INSTR function
+  elsif ( uc($function) eq "SPLIT" ) { # instr function
+    my $baseString = getToken($card);                       # string to be searched
+    my $strDelim = getToken($card);                         # string delimiter
+    my $thirdParm = getToken($card);                        # entry to return 
+    my $fourthParm = getToken($card);                       # max number of array elements (not supplied = unlimited)
+
+    if ( ($strDelim =~ /^'/) || ($strDelim =~ /^"/) ) {     # it is a quoted string ....
+      $strDelim = substr($strDelim,1,length($strDelim)-2); # strip off the quotes
+    }
+
+    if ( ($baseString =~ /^'/) || ($baseString =~ /^"/) ) {     # it is a quoted string ....
+      $baseString = substr($baseString,1,length($baseString)-2); # strip off the quotes
+    }
+
+    # SPLIT MUST have at least 2 parms
+
+    if ( $strDelim eq "" ) { # 2 parameters haven't been supplied
+      displayError("SPLIT function format is:\n)FUNC SPLIT xxx = <base string> <delimiter> [occurence] [max elements]\nNote: It MUST have 2 parameters - Function will return ''",$currentSubroutine);
+      return '';
+    }
+
+    if ( $thirdParm eq '' ) { $thirdParm = 0 } # set a default value of zero for the occurence
+
+    if ( ! isNumeric($thirdParm) ) {
+      displayError("SPLIT function format is:\n)FUNC SPLIT xxx = <base string> <delimiter> [occurence] [max elements]\nNote: If supplied, the third parameter must be numeric - it will be assumed to be 0",$currentSubroutine);
+      $thirdParm = 0;
+    }
+
+    if ( ( $fourthParm ne '' ) && ( ! isNumeric($fourthParm)) ) {
+      displayError("SPLIT function format is:\n)FUNC SPLIT xxx = <base string> <delimiter> [occurence] [max elements]\nNote: If supplied, the fourth parameter must be numeric - it will be assumed to be missing",$currentSubroutine);
+      $fourthParm = '';
+    }
+    elsif ( (isNumeric($fourthParm)) && ( $thirdParm >= $fourthParm) ) { # make sure that the entry is less than the number of entries
+      $fourthParm = $thirdParm + 1;
+      displayError("SPLIT function format is:\n)FUNC SPLIT xxx = <base string> <delimiter> [occurence] [max elements]\nNote: If supplied, the 4th Parm must be bigger than the 3rd Parm - it will be assumed to be $fourthParm",$currentSubroutine);
+    }
+
+    displayDebug("strDelim=$strDelim, baseString=$baseString, thirdParm=$thirdParm, fourthParm=$fourthParm",2,$currentSubroutine);
+
+    my @elemArr;
+    if ( $fourthParm eq '' ) {
+      @elemArr = split($strDelim, $baseString);
+    }
+    else {
+      @elemArr = split($strDelim, $baseString, $fourthParm);
+    }
+
+    return $elemArr[$thirdParm];   # return the wanted element
+
+  }  # end of SPLIT function
   elsif ( uc($function) eq "LEFT" ) {                       # LEFT function
     my $baseString = getToken($card);                       # string to be searched
     my $strLength = getToken($card);                        # number of chars to return
@@ -7915,7 +8063,7 @@ sub processFunction {
 
   } # end of WEBSAFE function
 
-  displayError("Function $function unknown. Known functions are:\n     INT, TRIM, LTRIM, RTRIM, LEN, INSTR, LEFT, RIGHT, MID, REMOVECRLF, REMOVEWHITESPACE, FORMATSQL,\n     GDATE, JDATE, PAD\nFunction will return nothing",$currentSubroutine);
+  displayError("Function $function unknown. Known functions are:\n     INT, TRIM, LTRIM, RTRIM, LEN, SPLIT, INSTR, LEFT, RIGHT, MID, REMOVECRLF, REMOVEWHITESPACE, FORMATSQL,\n     GDATE, JDATE, PAD\nFunction will return nothing",$currentSubroutine);
   return "";
 
 } # end of processFunction
@@ -7971,7 +8119,7 @@ sub adjustUnsetLengthFields {
 
     # break the preparsed ctl line into it's parts (maximum of 8 parts)
     displayDebug("CTL Card: $ctlCard",2,$currentSubroutine);
-    my ($delNull,$delimType,$fldName, $fldStart, $fldLen, $condStart, $condLen, $condValue) = split ($delimiter,$ctlCard,8);
+    my ($delNull,$delimType,$fldName, $fldStart, $fldLen, $condStart, $condLen, $condValue) = split (/[$delimiter]/,$ctlCard,8);
 
     # initialise parameters that weren't supplied
     if ( !defined($condValue) ) { $condValue = ''; }
@@ -7992,7 +8140,7 @@ sub adjustUnsetLengthFields {
  
             # break the preparsed ctl line into it's parts (maximum of 8 parts)
             displayDebug("CTL Card: $next_ctlCard",2,$currentSubroutine);
-            my ($next_delNull,$next_delimType,$next_fldName, $next_fldStart, $next_fldLen, $next_condStart, $next_condLen, $next_condValue) = split ($next_delimiter,$next_ctlCard,8);
+            my ($next_delNull,$next_delimType,$next_fldName, $next_fldStart, $next_fldLen, $next_condStart, $next_condLen, $next_condValue) = split (/[$next_delimiter]/,$next_ctlCard,8);
 
             $fldLen = $next_fldStart - $fldStart;
           }
@@ -8065,7 +8213,7 @@ sub setDefinedVariablesForFile {
     
     # break the preparsed ctl line into it's parts (maximum of 8 parts)
     displayDebug("CTL Card: $ctlCard",2,$currentSubroutine);
-    my ($delNull,$delimType,$fldName, $fldStart, $fldLen, $condStart, $condLen, $condValue) = split ($delimiter,$ctlCard,8); 
+    my ($delNull,$delimType,$fldName, $fldStart, $fldLen, $condStart, $condLen, $condValue) = split (/[$delimiter]/,$ctlCard,8); 
     
     # initialise parameters that weren't supplied
     if ( !defined($condValue) ) { $condValue = ''; }
@@ -8246,7 +8394,7 @@ sub loadFileCTL {
       elsif ( uc($_) =~ /^DELIMITED/) { $delimiter = substr($_,9,1); } 
       else                            { $delimiter = ','; }              # delimiter defaults to comma
 
-      my @ctlVals = split ($delimiter,$_,7);                             # based on the delimiter split it into a max of 7 fields
+      my @ctlVals = split (/[$delimiter]/,$_,7);                             # based on the delimiter split it into a max of 7 fields
       $ctlLines[$ctlArray{$ctlRef}][$j] = $delimiter . $ctlVals[0];      # keep the def type (first char is now the delimiter)
        
       if ( " FIXED DELIMITED " !~ uc($ctlVals[0]) ) {                    # first parm is not correct so just skip the whole card
@@ -8467,12 +8615,14 @@ sub loadInlineFileCTL {
 
     # skip comments
     if ( uc(trim($ctlLine)) =~ /^#/ ) { # comments are basically any line that starts with a #
+      $currentSkelLine++;
       next;
     }
 
     # validate the input control data
     if ( uc(trim($ctlLine)) =~ /^COND_NULL_IS_MATCH$/ ) { # set the flag if this control parameter is passed
       $condNULLisMatch = 1;                         # indicates that if a condition variable isn't found then it is considered a match (by default it is not)
+      $currentSkelLine++;
       next;
     }
 
@@ -8481,11 +8631,12 @@ sub loadInlineFileCTL {
     elsif ( uc($ctlLine) =~ /^DELIMITED/) { $delimiter = substr($ctlLine,9,1); }
     else                                  { $delimiter = ','; }              # delimiter defaults to comma
 
-    my @ctlVals = split ($delimiter,$ctlLine,7);                       # based on the delimiter split it into a max of 7 fields
+    my @ctlVals = split (/[$delimiter]/,$ctlLine,7);                       # based on the delimiter split it into a max of 7 fields
     $ctlLines[$ctlArray{$ctlRef}][$j] = $delimiter . $ctlVals[0];      # keep the def type (first char is now the delimiter)
 
     if ( " FIXED DELIMITED " !~ uc($ctlVals[0]) ) {                    # first parm is not correct so just skip the whole card
       displayError("CTL Card parameter should be FIXED or DELIMITED - will be ignored",$currentSubroutine);
+      $currentSkelLine++;
       next;
     }
 
@@ -8495,6 +8646,7 @@ sub loadInlineFileCTL {
     }
     else {                                                             # field name has not been supplied
       displayError("CTL Card parameter must hasve a field name defined - card $ctlLine will be ignored",$currentSubroutine);
+      $currentSkelLine++;
       next;
     }
 
