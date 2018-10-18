@@ -2,16 +2,26 @@
 # --------------------------------------------------------------------
 # commonFunctions.pm
 #
-# $Id: commonFunctions.pm,v 1.29 2018/05/29 04:30:48 db2admin Exp db2admin $
+# $Id: commonFunctions.pm,v 1.30 2018/10/15 05:01:01 db2admin Exp db2admin $
 #
 # Description:
 # Package cotaining common code.
 #   Subroutines included:
-#     getOpt
-#     trim
+#     displayMinutes 
+#     getCurrentTimestamp 
+#     timeAdd 
+#     timeAdj
+#     timeDiff 
+#     commonVersion 
+#     getOpt 
+#     getOpt_form 
+#     trim 
+#     ltrim 
 #     rtrim
-#     ltrim
-#     date
+#     myDate 
+#     processDirectory 
+#     localDateTime 
+#     convertToTimestamp 
 #
 # Usage:
 #   trim()
@@ -169,6 +179,9 @@
 #
 # ChangeLog:
 # $Log: commonFunctions.pm,v $
+# Revision 1.30  2018/10/15 05:01:01  db2admin
+# add in getCurrentTimestamp routine
+#
 # Revision 1.29  2018/05/29 04:30:48  db2admin
 # add in processing to cope with web supplied string parameters containing spaces
 #
@@ -265,7 +278,7 @@ use strict;
 # export parameters ....
 require Exporter;
 our @ISA = qw(Exporter);
-our @EXPORT_OK = qw(trim ltrim rtrim commonVersion getOpt myDate $getOpt_web $getOpt_optName $getOpt_min_match $getOpt_optValue getOpt_form @myDate_ReturnDesc $myDate_debugLevel $getOpt_diagLevel $getOpt_calledBy $parmSeparators processDirectory $maxDepth $fileCnt $dirCnt localDateTime $datecalc_debugLevel displayMinutes timeDiff timeAdd timeAdj convertToTimestamp);
+our @EXPORT_OK = qw(trim ltrim rtrim commonVersion getOpt myDate $getOpt_web $getOpt_optName $getOpt_min_match $getOpt_optValue getOpt_form @myDate_ReturnDesc $myDate_debugLevel $getOpt_diagLevel $getOpt_calledBy $parmSeparators processDirectory $maxDepth $fileCnt $dirCnt localDateTime $datecalc_debugLevel displayMinutes timeDiff timeAdd timeAdj convertToTimestamp getCurrentTimestamp);
 
 # persistent variables
 
@@ -402,6 +415,30 @@ sub printDebug {
 
   print "$routine - $test\n";
 }
+
+# -----------------------------------------------------------------
+# getCurrentTimestamp - function to return the current time as a timestamp
+#
+# usage:    getCurrentTimesatmp()
+# returns:  '2016.09.19 08:20:00'
+#
+# -----------------------------------------------------------------
+
+sub getCurrentTimestamp {
+
+  my $currentRoutine = 'getCurrentTimestamp';
+
+  my ($second, $minute, $hour, $dayOfMonth, $month, $yearOffset, $dayOfWeek, $dayOfYear, $daylightSavings) = localtime();
+  my $year = 1900 + $yearOffset;
+  $month = $month + 1;
+  $hour = substr("0" . $hour, length($hour)-1,2);
+  $minute = substr("0" . $minute, length($minute)-1,2);
+  $second = substr("0" . $second, length($second)-1,2);
+  $month = substr("0" . $month, length($month)-1,2);
+  my $day = substr("0" . $dayOfMonth, length($dayOfMonth)-1,2);
+  return "$year.$month.$day $hour:$minute:$second";
+
+} # end of getCurrentTimestamp
 
 # -----------------------------------------------------------------
 # timeAdd - function to return a timestamp with a specified number of
@@ -567,7 +604,7 @@ sub timeDiff {
 
 sub commonVersion {
 
-  my $ID = '$Id: commonFunctions.pm,v 1.29 2018/05/29 04:30:48 db2admin Exp db2admin $';
+  my $ID = '$Id: commonFunctions.pm,v 1.30 2018/10/15 05:01:01 db2admin Exp db2admin $';
   my @V = split(/ /,$ID);
   my $nameStr=$V[1];
   (my $name,my $x) = split(",",$nameStr);

@@ -2,7 +2,7 @@
 # --------------------------------------------------------------------
 # processSkeleton.pm
 #
-# $Id: processSkeleton.pm,v 1.108 2018/10/10 02:30:03 db2admin Exp db2admin $
+# $Id: processSkeleton.pm,v 1.109 2018/10/16 22:30:13 db2admin Exp db2admin $
 #
 # Description:
 # Script to process a skeleton
@@ -34,6 +34,9 @@
 # add inline CTL cards to the )DOF statement
 #
 # $Log: processSkeleton.pm,v $
+# Revision 1.109  2018/10/16 22:30:13  db2admin
+# add in the ability to call the PERLDBI ODBC module
+#
 # Revision 1.108  2018/10/10 02:30:03  db2admin
 # correct bug in assign
 #
@@ -716,7 +719,7 @@ sub skelVersion {
   # -----------------------------------------------------------
 
   my $currentSubroutine = 'skelVersion'; 
-  my $ID = '$Id: processSkeleton.pm,v 1.108 2018/10/10 02:30:03 db2admin Exp db2admin $';
+  my $ID = '$Id: processSkeleton.pm,v 1.109 2018/10/16 22:30:13 db2admin Exp db2admin $';
   my @V = split(/ /,$ID);
   my $nameStr=$V[1];
   my @N = split(",",$nameStr);
@@ -7126,7 +7129,7 @@ sub processSKELVERS {
   # -----------------------------------------------------------
   # Routine to process the SKELVERS statemnent. The format of the statement is:
   #
-  # )SKELVERS  $Id: processSkeleton.pm,v 1.108 2018/10/10 02:30:03 db2admin Exp db2admin $
+  # )SKELVERS  $Id: processSkeleton.pm,v 1.109 2018/10/16 22:30:13 db2admin Exp db2admin $
   #
   # Usage: processVERSION(<control card>)
   # Returns: sets the internal variable skelVers
@@ -8895,6 +8898,10 @@ sub processSkeleton {
     elsif ( uc($DBIModule) =~ 'SQLITE' ) { # DBI::SQLite module requested
       require DBD::SQLite;
       import DBD::SQLite;
+    }
+    elsif ( uc($DBIModule) =~ 'ODBC' ) { # DBI::ODBC module requested
+      require DBD::ODBC;
+      import DBD::ODBC;
     }
   }
   
