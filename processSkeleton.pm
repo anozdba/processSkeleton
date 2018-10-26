@@ -2,7 +2,7 @@
 # --------------------------------------------------------------------
 # processSkeleton.pm
 #
-# $Id: processSkeleton.pm,v 1.109 2018/10/16 22:30:13 db2admin Exp db2admin $
+# $Id: processSkeleton.pm,v 1.111 2018/10/26 04:12:30 db2admin Exp db2admin $
 #
 # Description:
 # Script to process a skeleton
@@ -34,6 +34,18 @@
 # add inline CTL cards to the )DOF statement
 #
 # $Log: processSkeleton.pm,v $
+# Revision 1.111  2018/10/26 04:12:30  db2admin
+# Various modifications:
+# 1. make indexing optionally case insensitive (defaults to acse insensitive)
+# 2. add in coding to allow skeleton updating of passed in variables
+# 3. Allow the use of literals to define index keys (LOWER_ALPHABET, UPPER_ALPHABET and NUMBERS)
+# 4. Add )INDEXTEST command to allow the manual generation of index entries (good for use in )DOT)
+# 5. Add in )INDEXCLEAR command to dump out all unused index entries
+# 6. Add in auto-indexing to FTAB
+#
+# Revision 1.110  2018/10/23 21:04:42  db2admin
+# initial )INDEX code implementation (not fully implemented)
+#
 # Revision 1.109  2018/10/16 22:30:13  db2admin
 # add in the ability to call the PERLDBI ODBC module
 #
@@ -445,7 +457,7 @@ my $ug;
 # my $ug    = Data::UUID->new;
 
 our @ISA = 'Exporter';
-our @EXPORT_OK = qw(processSkeleton skelVersion formatSQL $skelDebugLevel $skelCache $ctlCache $execCtlCache testRoutine $testRoutines $outputMode $skelShowSQL $DBIModule $skelDebugModules $skelDelimiter $skelVerboseSQLErrors $DOCMD_allowedStatements $skelMaxOutput $skelMaxTableOut $skelMaxRows);
+our @EXPORT_OK = qw(processSkeleton skelVersion formatSQL $skelDebugLevel $skelCache $ctlCache $execCtlCache testRoutine $testRoutines $outputMode $skelShowSQL $DBIModule $skelDebugModules $skelDelimiter $skelVerboseSQLErrors $DOCMD_allowedStatements $skelMaxOutput $skelMaxTableOut $skelMaxRows $indexCaseInsensitive);
 
 # published variables
 our $skelDelimiter = ',';   # delimiter to be used when generating dump file using )DMP
@@ -468,6 +480,7 @@ our $outputMode = 'STDOUT'; # variable defining the target environment for the g
                             #               HTTPFILE : not sure why but basically prefix the first string with CRLF
 our $DBIModule = '';        # DBI module to use for database connectivity
 our $DOCMD_allowedStatements = ' INSERT UPDATE DELETE '; # default allowed statements for )DOCMD
+our $indexCaseInsensitive = 1;  # default to case insensitive indexes
 
 # Bring across any environment variables that may exist
 
@@ -582,6 +595,18 @@ my $graphOptions = '';                    # graph options set with the )GRAPHOPT
 my $graphType = 'LINE';                   # type of graph to produce
 my $graphVariableNames = '';              # contains a list of the variables being created
 
+# Variables for INDEX processing
+my $provideIndex = 0;
+my $indexType = '';                       # (INDEXTYPE) EVERY, EXACT or PREFIX
+my $EV_interval = 10;                     # for EVERY - interval (default 10)
+my $EV_max = 20;                          # for EVERY - max entries (default 20)
+my $EV_type = 'DOT';                      # for EVERY - type of index marks (default DOT)
+my @indexLiteral = ();                    # array of the index labels to use
+my @indexLiteralUsed = ();                # array of indicator signifying if this index entry has been satisfied
+my $indexEntry = 0;                       # entry in the table that is to be indexed                    
+my $indexKey = 0;                         # unique number grouping the index entries
+my $indexCount = 0;                       # count of the number of times that )INDEXTEST has been called
+  
 BEGIN {
   if ( $^O eq "MSWin32") {
     $dirSep = "\\";
@@ -719,7 +744,7 @@ sub skelVersion {
   # -----------------------------------------------------------
 
   my $currentSubroutine = 'skelVersion'; 
-  my $ID = '$Id: processSkeleton.pm,v 1.109 2018/10/16 22:30:13 db2admin Exp db2admin $';
+  my $ID = '$Id: processSkeleton.pm,v 1.111 2018/10/26 04:12:30 db2admin Exp db2admin $';
   my @V = split(/ /,$ID);
   my $nameStr=$V[1];
   my @N = split(",",$nameStr);
@@ -2292,64 +2317,64 @@ sub putInTabs {
     # if both iPos and jPos were -1 (i.e. neither string found) then their sum would be -2
     while ( $iPos + $jPos > -2 ) {                                               # tab stops found in string
       if ( (( $iPos < $jPos ) && ( $iPos > -1 )) || ( $jPos == -1 ) ) {          # if no ~ found OR a ! was found before the ~ then ! to process next
-	$pad = " ";
-	# look for the tab stop that applies
-	displayDebug("tabEntries=$#tabEntries",2,$currentSubroutine);
-	
-	for ( my $i=0; $i <= $#tabEntries; $i++ ) {                               # for each tab stop entry
-	  displayDebug("tabEntries[$i]=$tabEntries[$i],iPos=$iPos",2,$currentSubroutine);
-	  if ( $tabEntries[$i] >= $iPos ) {                                      # found first tab marker past the ! character 
-            displayDebug("Tab stop found is $tabEntries[$i], iPos: $iPos",2,$currentSubroutine);
-	    if ( $iPos == 0 ) { # special case as it is the first character
-              $pad = space($tabEntries[$i] - $iPos);
-	    }
-	    else { 
-              $pad = space($tabEntries[$i] - $iPos);
-	    }
-	    last;                               
-	  }
-	}	
-	# replace the tab
-	if ( $iPos == 0 ) { # special case as it is the first character - just pad the front and skip the 1st character
-	  $convString = $pad . substr($convString, 1);
-	}
-	else {
-	  $convString = substr($convString, 0, $iPos) . $pad . substr($convString, $iPos + 1);
-        }  
-        # rescan for tab stops as the positions will have changed
-	$iPos = index($convString, $leftJustTab) ;
-	$jPos = index($convString, $rightJustTab) ;
-        displayDebug("$leftJustTab Pos: $iPos, $rightJustTab Pos: $jPos, Line: $convString",2,$currentSubroutine);
+        $pad = " ";
+        # look for the tab stop that applies
+        displayDebug("tabEntries=$#tabEntries",2,$currentSubroutine);
+    
+        for ( my $i=0; $i <= $#tabEntries; $i++ ) {                               # for each tab stop entry
+          displayDebug("tabEntries[$i]=$tabEntries[$i],iPos=$iPos",2,$currentSubroutine);
+          if ( $tabEntries[$i] >= $iPos ) {                                      # found first tab marker past the ! character 
+          displayDebug("Tab stop found is $tabEntries[$i], iPos: $iPos",2,$currentSubroutine);
+          if ( $iPos == 0 ) { # special case as it is the first character
+            $pad = space($tabEntries[$i] - $iPos);
+          }
+          else { 
+            $pad = space($tabEntries[$i] - $iPos);
+          }
+          last;                               
+        }
+      }   
+      # replace the tab
+      if ( $iPos == 0 ) { # special case as it is the first character - just pad the front and skip the 1st character
+        $convString = $pad . substr($convString, 1);
       }
-      else { # $rightJustTab must be next to process (the $rightJustTab means that the next token will be right justified to the tab stop)
-	$pad = " ";
-	my $kPos = $jPos + 1;
-        # find the end of the token
-	while ( index($skelTermChar, substr($convString,$kPos,1)) == -1 ) { $kPos++; } 
-	$kPos--;   # adjust pos to the last char
-	# now we know how long the token is to right justify (kpos - jpos - 1) 
-	# now find the tab stop that applies
-	for ( my $i=0; $i <= $#tabEntries; $i++ ) {                    # loop through each tab stop  
-	  if ( $tabEntries[$i] >= $jPos ) {                          # found first tab marker past the ~ character 
-	    if ( $jPos == 0 ) {                                      # special case as it is the first character
+      else {
+        $convString = substr($convString, 0, $iPos) . $pad . substr($convString, $iPos + 1);
+      }  
+      # rescan for tab stops as the positions will have changed
+      $iPos = index($convString, $leftJustTab) ;
+      $jPos = index($convString, $rightJustTab) ;
+      displayDebug("$leftJustTab Pos: $iPos, $rightJustTab Pos: $jPos, Line: $convString",2,$currentSubroutine);
+    }
+    else { # $rightJustTab must be next to process (the $rightJustTab means that the next token will be right justified to the tab stop)
+      $pad = " ";
+      my $kPos = $jPos + 1;
+      # find the end of the token
+      while ( index($skelTermChar, substr($convString,$kPos,1)) == -1 ) { $kPos++; } 
+        $kPos--;   # adjust pos to the last char
+        # now we know how long the token is to right justify (kpos - jpos - 1) 
+        # now find the tab stop that applies
+        for ( my $i=0; $i <= $#tabEntries; $i++ ) {                    # loop through each tab stop  
+          if ( $tabEntries[$i] >= $jPos ) {                          # found first tab marker past the ~ character 
+            if ( $jPos == 0 ) {                                      # special case as it is the first character
               $pad = space($tabEntries[$i] - $kPos);
             }
             else {  
               $pad = space($tabEntries[$i] - $kPos + 1);
             }  
-	    last;                                                    # finish the loop
-	  }
-	}
-	# now put the padding in 
-	if ( $jPos == 0 ) {                                          # special case as it is the first character
-	  $convString = $pad . substr($convString, $jPos + 1);
-	}
-	else {                                                       # just insert it into the string
-	  $convString = substr($convString, 0, $jPos) . $pad . substr($convString, $jPos + 1);
-	}
-	# rescan for tab stops as the positions will have changed
-	$iPos = index($convString, $leftJustTab) ;
-	$jPos = index($convString, $rightJustTab) ;
+            last;                                                    # finish the loop
+          }
+        }
+        # now put the padding in 
+        if ( $jPos == 0 ) {                                          # special case as it is the first character
+          $convString = $pad . substr($convString, $jPos + 1);
+        }
+        else {                                                       # just insert it into the string
+          $convString = substr($convString, 0, $jPos) . $pad . substr($convString, $jPos + 1);
+        }
+        # rescan for tab stops as the positions will have changed
+        $iPos = index($convString, $leftJustTab) ;
+        $jPos = index($convString, $rightJustTab) ;
         displayDebug("$leftJustTab Pos: $iPos, $rightJustTab Pos: $jPos, Line: $convString",2,$currentSubroutine);
       }
     }
@@ -2480,19 +2505,19 @@ sub evaluateConditionOLD {
     if ( substr($condArray[$nCond],0,3) eq "OR " ) {
       if ( $eval eq "True" ) { # any OR condition that returns true means the whole SEL is true
         displayDebug("exiting via path 1",2);
-	return "True";  
+        return "True";  
       }
       elsif ( $runningCond eq "True" ) { #
         displayDebug("exiting via path 2",2);
-	return "True";
+        return "True";
       }
     }  
     elsif ( substr($condArray[$nCond],0,3) eq "AND" ) {
       displayDebug("AND: \$eval=$eval, \$runningCond=$runningCond",2);
       if ( ($eval eq "False") or ($runningCond eq "False") ) { # any AND that has False to the left or 
-	                                                       # evaluates False means the SEL is false
+                                                           # evaluates False means the SEL is false
         displayDebug("exiting via path 3",2);
-	return "False";
+        return "False";
       }
     }  
     else { # should only be selected for the first condition
@@ -2772,16 +2797,16 @@ sub displayDataHorizontally {
     
     if ( $condStart ne "" ) {                                                  # condition was supplied so check if we want to process this data card
       if ( uc($condStart) eq "DELIMITED" ) {                                   # delimited condition
-	if ( defined($delimArr[$condLen]) ) {                                  # If the condition field exists ....
-  	  $testValue = $delimArr[$condLen];                                    # assign the value to the test field
+        if ( defined($delimArr[$condLen]) ) {                                  # If the condition field exists ....
+          $testValue = $delimArr[$condLen];                                    # assign the value to the test field
         }
-	else { # test field doesn't exist
-	  $testValue = "KCKCTESTFAILEDKCKC";                                   # make up a value for the test value
-	}
+        else { # test field doesn't exist
+          $testValue = "KCKCTESTFAILEDKCKC";                                   # make up a value for the test value
+        }
       }
       else { # not a delimited value ....
         if ( $condStart > length($fileRecord)) {                               # field start outside record
-	  $testValue = "KCKCTESTFAILEDKCKC";                                   # make up a value for the test value
+          $testValue = "KCKCTESTFAILEDKCKC";                                   # make up a value for the test value
         }
         elsif ( $condStart + $condLen > length($fileRecord) ) {                # field end outside record
           $testValue = substr($fileRecord, $fldStart);
@@ -2799,7 +2824,7 @@ sub displayDataHorizontally {
       else {                                                                   # it was a valid value
         if ( evaluateCondition($testValue . $condValue) eq "True" ) {          # Check if the condition holds
           $setVar = "Yes";
-	}
+        }
       }
     }
     else { # no condition so just set the variable
@@ -2822,12 +2847,12 @@ sub displayDataHorizontally {
         }
       }
       else { # it is a delimited field
-	if ( defined($delimArr[$fldLen]) ) {                     # Note: the data record has previously been split
-  	  $fldValue = $delimArr[$fldLen];                        # assign it the right value
+    if ( defined($delimArr[$fldLen]) ) {                     # Note: the data record has previously been split
+      $fldValue = $delimArr[$fldLen];                        # assign it the right value
         }
-	else { # not enough values in the record
-	  $fldValue = "NULL";
-	}
+    else { # not enough values in the record
+      $fldValue = "NULL";
+    }
       }
       # and now just set the value for the variable ....
       displayDebug("Displaying variable $fldName which has a value of $fldValue",1,$currentSubroutine);
@@ -3428,15 +3453,372 @@ sub processDMP {
         }
       }
       displayDebug("Processed: $card. Sel Count = $skelSELCount, SEL Resume Level = $skelSEL_resumeLevel",2,$currentSubroutine);
-      }
-      else { # Skipped because within a failed or empty  )DOT
-        displayDebug("Skipped: $card. Sel Count = $skelSELCount, SEL Resume Level = $skelSEL_resumeLevel",2,$currentSubroutine);
-      }
     }
-    else { # Skipped because within a failed )SEL
+    else { # Skipped because within a failed or empty  )DOT
       displayDebug("Skipped: $card. Sel Count = $skelSELCount, SEL Resume Level = $skelSEL_resumeLevel",2,$currentSubroutine);
     }
+  }
+  else { # Skipped because within a failed )SEL
+    displayDebug("Skipped: $card. Sel Count = $skelSELCount, SEL Resume Level = $skelSEL_resumeLevel",2,$currentSubroutine);
+  }
 } # end of processDMP
+
+sub checkIndexEntries {
+
+  # -----------------------------------------------------------
+  # Routine to see if there are any key words in the index entries that need replacing
+  #
+  # Keywords processed are:
+  #   1.  LOWER_ALPHABET .... a -> b
+  #   2.  UPPER_ALPHABET .... A -> B
+  #   3.  NUMBERS ... 0 -> 9
+  #       
+  # Usage: checkIndexEntries(<index entries>)
+  # Returns: the suppllied index entries with certain keywords replaced
+  # -----------------------------------------------------------
+
+  my $indexEntries = shift;
+
+  $indexEntries =~ s/LOWER_ALPHABET/a b c d e f g h i j k l m n o p q r s t u v w x y z/gi;  
+  $indexEntries =~ s/UPPER_ALPHABET/A B C D E F G H I J K L M N O P Q R S T U V W X Y Z/gi;  
+  $indexEntries =~ s/NUMBERS/0 1 2 3 4 5 6 7 8 9/gi;  
+  
+  if ( $indexEntries =~ /CASE_INSENSITIVE/i ) { # make it a case insenstive index
+    $indexCaseInsensitive = 1;
+    $indexEntries =~ s/CASE_INSENSITIVE//gi;  
+  }
+  elsif ( $indexEntries =~ /CASE_SENSITIVE/i ) { # make it a case sensitive index
+    $indexCaseInsensitive = 0;
+    $indexEntries =~ s/CASE_SENSITIVE//gi;  
+  }
+  
+  return $indexEntries;
+  
+}
+
+sub processINDEX {
+  # -----------------------------------------------------------
+  # Routine to establish the indexing requiremtns for an
+  # automated table display like FTAB
+  #
+  # The INDEX control statement looks like:
+  #   1.  )INDEX EVERY <# rows> [MAX <limit of elements>] [TYPE <DOT|NUM>]
+  #   2.  )INDEX EXACT <list of index entries to exactly match> [ON <tab entry to check>]
+  #   3.  )INDEX PREFIX <list of index entries to partially match match> [ON <tab entry to check>]
+  #       
+  #       Note: Lists are space delimited
+  #
+  # Usage: processINDEX(<control Card>)
+  # Returns: nothing but will set up control variables and write out index entries
+  # -----------------------------------------------------------
+
+  my $currentSubroutine = 'processINDEX';
+
+  my $card = shift;                                            # get the card information
+  $indexType = getToken($card);                                # (INDEXTYPE) EVERY, EXACT or PREFIX
+  my $indexEntries;
+  $EV_interval = 10;                                              # for EVERY - interval (default 10)
+  $EV_max = 20;                                                # for EVERY - max entries (default 20)
+  $EV_type = 'DOT';                                            # for EVERY - type of index marks (default DOT)
+  
+  if ( $skelSelSkipCards eq "No" ) {                           # not skipping cards because of a failed )SEL
+    if ( $skelDOTSkipCards eq "No" ) {                         # Not within a )DOT being skipped
+      $provideIndex = 1;
+      $indexCount = 0;                                         # reset the count
+      $indexKey++;                                             # create the unique number marking this index
+      if (uc($indexType) eq 'EVERY' ) {
+        my $tmp = getToken($card);                             # should be the interval number 
+        if ( $tmp ne '' ) {                                    # a value exists     
+          if (isNumeric($tmp) ) { 
+            $EV_interval = $tmp;          
+            $tmp = getToken($card);                            # should be a literal MAX
+            if ( uc($tmp) eq 'MAX') { 
+              $tmp = getToken($card);                          # should be the max entries value
+              if (isNumeric($tmp) ) { 
+                $EV_max = $tmp;
+                $tmp = getToken($card);                        # should be a literal TYPE
+                if ( uc($tmp) eq 'TYPE') { 
+                  $tmp = getToken($card);                      # should be one of DOT or NUM
+                  if (uc($tmp) eq 'DOT' ) { 
+                    $EV_type = 'DOT';
+                  }
+                  elsif (uc($tmp) eq 'NUM' ) { 
+                    $EV_type = 'NUM';
+                  }
+                  else { # invalid value
+                    displayError(")INDEX EVERY - type value is not one of DOT or NUM - it will be defaulted to DOT",$currentSubroutine);
+                  }
+                }
+              }
+              else { # invalid value
+                displayError(")INDEX EVERY - max value is not numeric will be defaulted to 20 and rest of card ignored",$currentSubroutine);
+              }
+            }
+            else { # invalid value
+              displayError(")INDEX EVERY - literal MAX is missing - rest of card ignored",$currentSubroutine);
+            }
+          }
+          else { # invalid value
+            displayError(")INDEX EVERY - interval is not numeric will be defaulted to 10 and rest of card ignored",$currentSubroutine);
+          }
+        }
+        # at this point all $EV_ values set so construct the indexEntries variable 
+        $indexEntries = '';
+        for ( my $cnt = 1 ; $cnt <= $EV_max; $cnt++ ) {
+          if ( $EV_type eq 'DOT' ) {
+            $indexEntries .= '. ';
+          }
+          else {
+            $indexEntries .= "$cnt ";
+          }
+        }
+      }
+      elsif ( uc($indexType) eq 'EXACT' ) {
+        $indexEntries = trim(substr($card,$currentLinePosition));  # (INDEX Elements)
+        $indexEntries = checkIndexEntries($indexEntries);
+        if ( uc($indexEntries) =~ / ON / ) { # there is an ON parameter
+          my ($tmp1, $tmp2) = ($indexEntries =~ /(.*) [oO][nN] (.*)/);
+          if ( isNumeric($tmp2) ) {          # this should be the table entry to be indexed
+            $indexEntry = $tmp2;
+            $indexEntries = $tmp1;
+          }
+          else {
+            displayError(")INDEX EXACT - Table entry value to be indexed not numeric - will default to 0",$currentSubroutine);
+            $indexEntry = 0;
+          }
+        }
+      }
+      elsif ( uc($indexType) eq 'PREFIX' ) {
+        $indexEntries = trim(substr($card,$currentLinePosition));  # (INDEX Elements)
+        $indexEntries = checkIndexEntries($indexEntries);
+        if ( uc($indexEntries) =~ / ON / ) { # there is an ON parameter
+          my ($tmp1, $tmp2) = ($indexEntries =~ /(.*) [oO][nN] (.*)/);
+          if ( isNumeric($tmp2) ) {          # this should be the table entry to be indexed
+            $indexEntry = $tmp2;
+            $indexEntries = $tmp1;
+          }
+          else {
+            displayError(")INDEX PREFIX - Table entry value to be indexed not numeric - will default to 0",$currentSubroutine);
+            $indexEntry = 0;
+          }
+        }
+      }
+      else { # unknown type
+        displayError("Index type $indexType unknown. )INDEX card will be skipped",$currentSubroutine);
+        return;
+      }
+      # at this point all variables have been set from the control card
+      # time to print out the HTML index entries
+      @indexLiteral = split(" ", $indexEntries);
+      # turn off all of the used indicators
+      for ( my $ent = 0; $ent < $#indexLiteral; $ent++) { $indexLiteralUsed[$ent] = 0; }
+      
+      outputLine('<BR>');
+      if ( $indexType eq 'EVERY' ) {
+        # <a href="#CMDBValidation.pl" title="">CMDBValidation.pl</a>
+        for ( my $i = 1; $i <= $EV_max; $i++ ) {
+          outputLine("<a href=\"#IDX${indexKey}_$i\" title=\"\">[$indexLiteral[$i-1]]</a>");
+        }
+      }
+      else { # must be EXACT or PREFIX
+        foreach my $i (@indexLiteral) {
+          outputLine("<a href=\"#IDX${indexKey}_$i\" title=\"\">[$i]</a>");
+        }
+      }
+      outputLine('<BR>');
+    }
+    else { # Skipped because within a failed or empty  )DOT
+      displayDebug("Skipped: $card. Sel Count = $skelSELCount, SEL Resume Level = $skelSEL_resumeLevel",2,$currentSubroutine);
+    }
+  }
+  else { # Skipped because within a failed )SEL
+    displayDebug("Skipped: $card. Sel Count = $skelSELCount, SEL Resume Level = $skelSEL_resumeLevel",2,$currentSubroutine);
+  }
+} # end of processINDEX
+
+sub checkForIndexReq {
+  # -----------------------------------------------------------
+  # Routine to test if an index target entry is required
+  #
+  # Usage: checkForIndexReq(<value being tested>)
+  # Returns: a null string if no index required otherwise returns 
+  # the indexing element (normally a <span> construct)
+  # -----------------------------------------------------------
+
+  my $currentSubroutine = 'checkForIndexReq';
+
+  my $indexValue = shift;                                  # Value to be tested
+  my $returnValue = '';
+  my $compIndexLiteral;
+  
+  if ( $indexValue =~ /^<a / ) { # if it starts with an <a then strip that bit off before checking
+    $indexValue =~ s/^<a .*?>//;  
+  }
+  
+  if ( $indexCaseInsensitive ) { $indexValue = uc($indexValue); } # for case insensitve make it upper case
+  
+  if ( $provideIndex ) {                                   # has an )INDEX card preceded this?
+    $indexCount++;                                         # increment the count of index points checked
+    if (uc($indexType) eq 'EVERY' ) {
+      # produce an index entry if we are at an interval boundary
+      if ( $indexCount % $EV_interval == 0 ) {    # we are at a point to do a index point
+        my $arrayIdx = $indexCount / $EV_interval;
+        if ( ! $indexLiteralUsed[$arrayIdx-1] ) { # this index hasn't been generated before
+          $indexLiteralUsed[$arrayIdx-1] = 1;     # flag it as used
+          $returnValue = "<span id=\"IDX${indexKey}_$arrayIdx\"><\/span>";
+        }
+      }
+    }
+    else { # index type is not EVERY (note that this loop may produce multiple entries)
+      for ( my $ent = 0; $ent <= $#indexLiteral; $ent++ ) { # loop through the entries 
+        # adjust the comparison value based on case insensitivity
+        if ( $indexCaseInsensitive ) { # case insenstive comparison
+          $compIndexLiteral = uc($indexLiteral[$ent]);
+        }
+        else {
+          $compIndexLiteral = $indexLiteral[$ent];
+        }
+        
+        if ( ! $indexLiteralUsed[$ent] ) {                  # this index has not been used
+          if (uc($indexType) eq 'EXACT' ) {
+            if ( $compIndexLiteral eq $indexValue ) {     # match on values
+              $indexLiteralUsed[$ent] = 1;                  # flag it as used
+              $returnValue .= "<span id=\"IDX${indexKey}_$indexLiteral[$ent]\"><\/span>";
+            }
+          }  
+          elsif (uc($indexType) eq 'PREFIX' ) { 
+            my $indlen = length($indexLiteral[$ent]);
+            if ( $compIndexLiteral le substr($indexValue,0,$indlen) ) {   # match on prefix
+              $indexLiteralUsed[$ent] = 1;                     # flag it as used
+              $returnValue .= "<span id=\"IDX${indexKey}_$indexLiteral[$ent]\"><\/span>";
+            }
+          }  
+        }
+      }
+    }
+  }
+    
+  return $returnValue;
+    
+} # end of checkForIndexReq
+
+sub checkForIndexNotUsed {
+  # -----------------------------------------------------------
+  # Routine to generate a list of index targets that have not been created
+  #
+  # Usage: checkForIndexReq(<value being tested>)
+  # Returns: a null string if no index required otherwise returns 
+  # the indexing element (normally a <span> construct)
+  # -----------------------------------------------------------
+
+  my $currentSubroutine = 'checkForIndexNotUsed';
+
+  my $indexValue = shift;                                  # Value to be tested
+  my $returnValue = '';
+  
+  if ( $provideIndex ) {                                   # has an )INDEX card preceded this?
+    $indexCount=0;                                         # clear down the count of index checks made
+    
+    for ( my $ent = 0; $ent <= $#indexLiteral; $ent++ ) { # loop through the entries 
+      if ( ! $indexLiteralUsed[$ent] ) {                  # this index has not been used
+        $returnValue .= "<span id=\"IDX${indexKey}_$indexLiteral[$ent]\"><\/span>";
+      }
+      else {
+        $indexLiteralUsed[$ent] = 0;                      # mark the used entries unused
+      }
+    }  
+    
+  }
+    
+  return $returnValue;
+    
+} # end of checkForIndexNotUsed
+
+sub processINDEXTEST {
+  # -----------------------------------------------------------
+  # Routine to test if the passed value requires an index entry
+  #
+  # The INDEXTEST control statement looks like )INDEXTEST <value>
+  #
+  # Usage: processINDEXTEST(<control Card>)
+  # Returns: nothing but will output an index entry if it is required
+  # -----------------------------------------------------------
+
+  my $currentSubroutine = 'processINDEXTEST';
+
+  my $card = shift;                                            # get the card information
+  my $indexValue = getToken($card);                            # Value to be tested
+  
+  if ( $skelSelSkipCards eq "No" ) {                           # not skipping cards because of a failed )SEL
+    if ( $skelDOTSkipCards eq "No" ) {                         # Not within a )DOT being skipped
+      my $indexTest = checkForIndexReq($indexValue);
+      if ( $indexTest ne '' ) {                                # index entry is needed here
+        outputLine($indexTest);
+      }
+    }
+    else { # Skipped because within a failed or empty  )DOT
+      displayDebug("Skipped: $card. Sel Count = $skelSELCount, SEL Resume Level = $skelSEL_resumeLevel",2,$currentSubroutine);
+    }
+  }
+  else { # Skipped because within a failed )SEL
+    displayDebug("Skipped: $card. Sel Count = $skelSELCount, SEL Resume Level = $skelSEL_resumeLevel",2,$currentSubroutine);
+  }
+} # end of processINDEXTEST
+
+sub processINDEXCLEAR {
+  # -----------------------------------------------------------
+  # Routine to produce index targets for all entries that have not been used
+  #
+  # The INDEXCLEAR control statement looks like )INDEXCLEAR 
+  #
+  # Usage: processINDEXCLEAR()
+  # Returns: nothing but will output an index target entry for each unused index entry
+  # -----------------------------------------------------------
+
+  my $currentSubroutine = 'processINDEXCLEAR';
+
+  my $card = shift;                                            # get the card information
+  my $indexValue = getToken($card);                            # Value to be tested
+  
+  if ( $skelSelSkipCards eq "No" ) {                           # not skipping cards because of a failed )SEL
+    if ( $skelDOTSkipCards eq "No" ) {                         # Not within a )DOT being skipped
+      my $indexTest = checkForIndexNotUsed();
+      if ( $indexTest ne '' ) {                                # index entry is needed here
+        outputLine($indexTest);
+      }
+    }
+    else { # Skipped because within a failed or empty  )DOT
+      displayDebug("Skipped: $card. Sel Count = $skelSELCount, SEL Resume Level = $skelSEL_resumeLevel",2,$currentSubroutine);
+    }
+  }
+  else { # Skipped because within a failed )SEL
+    displayDebug("Skipped: $card. Sel Count = $skelSELCount, SEL Resume Level = $skelSEL_resumeLevel",2,$currentSubroutine);
+  }
+} # end of processINDEXCLEAR
+
+sub processINDEXOFF {
+  # -----------------------------------------------------------
+  # Routine to turn off any index creation until the next )INDEX card
+  #
+  # Usage: processINDEXOFF()
+  # Returns: nothing but will turn off index processing
+  # -----------------------------------------------------------
+
+  my $currentSubroutine = 'processINDEXOFF';
+  my $card = shift;       
+
+  if ( $skelSelSkipCards eq "No" ) {                           # not skipping cards because of a failed )SEL
+    if ( $skelDOTSkipCards eq "No" ) {                         # Not within a )DOT being skipped
+      $provideIndex = 0;                                       # index turned off
+    }
+    else { # Skipped because within a failed or empty  )DOT
+      displayDebug("Skipped: $card. Sel Count = $skelSELCount, SEL Resume Level = $skelSEL_resumeLevel",2,$currentSubroutine);
+    }
+  }
+  else { # Skipped because within a failed )SEL
+    displayDebug("Skipped: $card. Sel Count = $skelSELCount, SEL Resume Level = $skelSEL_resumeLevel",2,$currentSubroutine);
+  }
+} # end of processINDEXOFF
 
 sub getTabValue {
   # -----------------------------------------------------------
@@ -4100,18 +4482,18 @@ sub processCTAB {
         outputLineNT('<script type="text/javascript">');
         outputLineNT('function SetAllCheckBoxes(FormName, FieldName, CheckValue)');
         outputLineNT('{');
-        outputLineNT('	if(!document.forms[FormName])');
-        outputLineNT('		return;');
+        outputLineNT('  if(!document.forms[FormName])');
+        outputLineNT('      return;');
         outputLineNT('    var objCheckBoxes = document.forms[FormName].elements[FieldName];');
-        outputLineNT('	if(!objCheckBoxes)');
-        outputLineNT('		return;');
-        outputLineNT('	var countCheckBoxes = objCheckBoxes.length;');
-        outputLineNT('	if(!countCheckBoxes)');
-        outputLineNT('		objCheckBoxes.checked = CheckValue;');
+        outputLineNT('  if(!objCheckBoxes)');
+        outputLineNT('      return;');
+        outputLineNT('  var countCheckBoxes = objCheckBoxes.length;');
+        outputLineNT('  if(!countCheckBoxes)');
+        outputLineNT('      objCheckBoxes.checked = CheckValue;');
         outputLineNT('    else');
-        outputLineNT('		// set the check value for all check boxes');
-        outputLineNT('		for(var i = 0; i < countCheckBoxes; i++)');
-        outputLineNT('			objCheckBoxes[i].checked = CheckValue;');
+        outputLineNT('      // set the check value for all check boxes');
+        outputLineNT('      for(var i = 0; i < countCheckBoxes; i++)');
+        outputLineNT('          objCheckBoxes[i].checked = CheckValue;');
         outputLineNT('}');
         outputLineNT('</script>');
         $checkAllWritten = 1;     # make sure this isn't written twice
@@ -4678,15 +5060,21 @@ sub processFTAB {
           
             displayDebug("About to enter row loop",2,$currentSubroutine);
             my $moreToProcess = 1;                              # initialise the stop flag
+            my $indexTarget = '';
           
             while ( $moreToProcess ) {                          # A value of 1 indicates data was returned
               displayDebug("In cursor loop",2,$currentSubroutine);
+              my $fType = $skelCursor{'FTAB'}->{TYPE}->[$indexEntry]; # $fieldType is now the field type (CHAR, VARCHAR etc)
+              displayDebug("fType: $fType",1,$currentSubroutine);
+              $indexTarget = checkForIndexReq(getTabValue($fType, ${$skelCursorRow{'FTAB'}}[$indexEntry], 'FTAB',  $indexEntry));   # pass field type and the field across
+              displayDebug("indexTarget: $indexTarget: $fType",1,$currentSubroutine);
               $tStr = "";                                       # Initialise the output line 
               if ( $outputMode eq "HTTP" ) {                          # output it as a html table
                 $tStr = "<tr>";                                 # set new table row tag
                 $FTAB_output_len += length("<tr>");
               }
               for ( my $i=0; $i<$num_of_fields; $i++ ) {
+                if ( $i == 1 ) { $indexTarget = ''; }           # only put an index target in once
                 my $fieldType = $skelCursor{'FTAB'}->{TYPE}->[$i]; # $fieldType is now the field type (CHAR, VARCHAR etc)
                 
                 $skelTabValue = ${$skelCursorRow{'FTAB'}}[$i];
@@ -4702,18 +5090,18 @@ sub processFTAB {
                 if ( $outputMode eq "HTTP" ) {                          # output it as a html table cell
                   if ( isNumeric($fieldType) ) { # field type is a numeric (DB2 field types are numeric)
                     if ( $numericFieldTypes =~ $fieldType ) { # right align numeric fields
-                      $tStr .= "<td align=\"right\">" . $skelTabValue . "</td> ";
+                      $tStr .= "<td align=\"right\">" . $indexTarget . $skelTabValue . "</td> ";
                     }
                     else { # character field ... just normal left alignment
-                      $tStr .= "<td>" . $skelTabValue . "</td> ";
+                      $tStr .= "<td>" . $indexTarget . $skelTabValue . "</td> ";
                     }
                   }
                   else { # the field types are not numeric (SQLite uses character strings)
                     if ( $fieldType eq "NUMERIC" ) { # right align numeric fields
-                      $tStr .= "<td align=\"right\">" . $skelTabValue . "</td> ";
+                      $tStr .= "<td align=\"right\">" . $indexTarget . $skelTabValue . "</td> ";
                     }
                     else { # dont right align the value ... just normal left alignment
-                      $tStr .= "<td>" . $skelTabValue . "</td> "; 
+                      $tStr .= "<td>" . $indexTarget . $skelTabValue . "</td> "; 
                     }
                   }
                 }
@@ -6131,19 +6519,19 @@ sub processSELELSE {
   if ( ( $skelGotoENDSEL eq "No" ) ) {                         # no successful SEL/SELELSE yet so need to keep checking
     if ( ( $skelDOTSkipCards eq "No" ) ) {                     # not skipping cards because we are within a )DOT
       if ( ( $skelSelSkipCards eq "Yes" ) ) {                  # skipping SEL cards because previouse check failed so keep checking
-	if ( trim($card) eq ")SELELSE" ) {                     # the card has no conditions so is a catch all
-	  if ( $skelSELCount == $skelSEL_resumeLevel + 1 ) {   # check to see if we are back in play doing checks
-	    $skelSelSkipCards = "No";                          # process the cards in this )SELELSE group
-	    $skelGotoENDSEL = "Yes";                           # after processing goto the )ENDSEL
-	  }
-	}
-	else { # the SELELSE has a condition parameter
+    if ( trim($card) eq ")SELELSE" ) {                     # the card has no conditions so is a catch all
+      if ( $skelSELCount == $skelSEL_resumeLevel + 1 ) {   # check to see if we are back in play doing checks
+        $skelSelSkipCards = "No";                          # process the cards in this )SELELSE group
+        $skelGotoENDSEL = "Yes";                           # after processing goto the )ENDSEL
+      }
+    }
+    else { # the SELELSE has a condition parameter
           $tmpI = trim(substr($card,9));
           displayDebug("Passing the following condition (SELELSE) : $tmpI",2,$currentSubroutine);
           
           if ( processCondition($tmpI) ) { # returns 1 if condition is true
             displayDebug("Condition evaluated to True",2,$currentSubroutine);
-	    $skelSelSkipCards = "No";                        # process the cards in this )SELELSE group
+        $skelSelSkipCards = "No";                        # process the cards in this )SELELSE group
             $skelGotoENDSEL = "Yes";                         # indicates that after the next ENDSEL we need to skip to the )ENDSEL for this )SEL                  
           }
           else { # evaluated false
@@ -6152,15 +6540,15 @@ sub processSELELSE {
             $skelSEL_resumeLevel = $skelSELCount - 1;                         # indicator to show at what stack level the processing should restart (to copy with )SEL within )SEL
             $skelGotoENDSEL = "No";                                           # indicates that we haven't finished with this )SEL as yet - there may be a )SELELSE that will be true
           }
-	}
+    }
       }  
       else { # SELSkipCards was false which means that pervious SEL/SELELSE was satisfied
         $skelSelSkipCards = "Yes";                           # start skipping cards
-	$skelSEL_resumeLevel = $skelSELCount -1;             # set the resume level as we will be skipping cards now
+    $skelSEL_resumeLevel = $skelSELCount -1;             # set the resume level as we will be skipping cards now
         if ( $skelSELCount == 0 ) { # if true then there is a problem as there is an unmatch )SELELSE
           displayError(")SELELSE without )SEL. Card will be ignored",$currentSubroutine);
           $skelSelSkipCards = "No";
-	}
+    }
         displayDebug("Skipped: $card. Sel Count = $skelSELCount, SEL Resume Level = $skelSEL_resumeLevel",2,$currentSubroutine);
       }
       displayDebug("Processed )SELELSE. Sel Count = $skelSELCount, SEL Resume Level = $skelSEL_resumeLevel",1,$currentSubroutine);
@@ -6236,12 +6624,83 @@ sub processASET {
     $varName = trim($varName);
     $varValue = substituteVariables(trim($varValue));
     displayDebug("Value is = $varValue",1,$currentSubroutine);
-    setVariable($varName,$varValue);    # set the variable
+
+    if ( ! checkForSpecialVariables($varName, $varValue) ) { # will return 0 if not special
+      setVariable($varName,$varValue);    # set the variable
+      displayDebug("Value $varValue assigned to $varName",0,$currentSubroutine);
+    }
   }
   else { # skip this card
     displayDebug("Skipped: $card. Sel Count = $skelSELCount, SEL Resume Level = $skelSEL_resumeLevel",2,$currentSubroutine);
   }  
 } # end of processASet
+
+sub checkForSpecialVariables {
+  # -----------------------------------------------------------
+  # Routine to process special variables supplied on a )SET or 
+  # )ASET command
+  # 
+  # Special variables are:
+  #
+  # skelDelimiter         # delimiter to be used when generating dump file using )DMP
+  # skelMaxOutput         # max string length length to be returned -  his is not an absolute value - output will be not be added to the string once it  
+  #                       # exceeds this limit but the string wont be truncated to this length
+  # skelMaxRows           # max number of rows to be displayed by the FTAB Command
+  # skelMaxTableOut       # max length length of the output generated by a FTAB command - output will be not be added to the string once it    
+  # skelDebugModules      # variable indicating which modules debug messages should be produced for    
+  # skelShowSQL           # variable indicating if generated SQL should be displayed (defaults to NO)
+  # skelDebugLevel        # by default dont list any debug information  
+  # skelVerboseSQLErrors  # by default dont print out verbose SQL erros details (i.e. dont print out when no rows found and dont print SQL)        
+  # testRoutines          # variable containing which tests to run in the testRoutine sub
+  # indexCaseInsensitive  # default to case insensitive indexes       
+  #
+  # Usage: checkForSpecialVariables(<variable name>, <value>)
+  # Returns: sets special variables, returns 1 if it was a special variabloe, 0 otherwise
+  # -----------------------------------------------------------
+
+  my $currentSubroutine = 'checkForSpecialVariables';
+  my $varName = shift;
+  my $varValue = shift;
+  
+  my $returnValue = 0;
+  my $searchName = " " . uc($varName) . " ";
+  
+  displayDebug("Starting $varName <> $varValue",1,$currentSubroutine);
+  
+  if ( ' SKELDELIMITER SKELMAXOUTPUT SKELMAXROWS SKELMAXTABLEOUT SKELDEBUGMODULES SKELSHOWSQL SKELDEBUGLEVEL SKELVERBOSESQLERRORS TESTROUTINES INDEXCASEINSENSITIVE ' =~ /$searchName/ ) { # it is a special variable  
+
+    displayDebug("0 $varName = $varValue",1,$currentSubroutine);
+    
+    if ( ' SKELDELIMITER SKELDEBUGMODULES SKELSHOWSQL SKELVERBOSESQLERRORS ' =~ /' ' . uc($varName) . ' '/ ) { # character parameters allowed
+    displayDebug("1 $varName = $varValue",1,$currentSubroutine);
+    if ( uc($varName) eq 'SKELDELIMITER' ) { $skelDelimiter = $varValue; }
+      elsif ( uc($varName) eq 'SKELDEBUGMODULES' ) { $skelDebugModules  = $varValue; }
+      elsif ( uc($varName) eq 'SKELSHOWSQL' ) { $skelShowSQL  = $varValue; }
+      elsif ( uc($varName) eq 'SKELVERBOSESQLERRORS' ) { $skelVerboseSQLErrors  = $varValue; }
+      $returnValue = 1;
+    }
+    else { # these entries only take numeric values
+      if ( isNumeric($varValue) ) {
+        displayDebug("2 $varName = $varValue",1,$currentSubroutine);
+        if ( uc($varName) eq 'SKELMAXOUTPUT' ) { $skelMaxOutput  = $varValue; }
+        elsif ( uc($varName) eq 'SKELMAXROWS' ) { $skelMaxRows  = $varValue; }
+        elsif ( uc($varName) eq 'SKELMAXTABLEOUT' ) { $skelMaxTableOut  = $varValue; }
+        elsif ( uc($varName) eq 'SKELDEBUGLEVEL' ) { $skelDebugLevel  = $varValue; }
+        elsif ( uc($varName) eq 'TESTROUTINES' ) { $testRoutines  = $varValue; }
+        elsif ( uc($varName) eq 'INDEXCASEINSENSITIVE' ) { $indexCaseInsensitive = $varValue; }
+        $returnValue = 1;
+      }
+      else {
+        displayError("Value must be numeric ($varName = $varValue) - will not be treated as special character",$currentSubroutine);
+        $returnValue = 0;    
+      }
+    }
+    
+  }
+  
+  return $returnValue;
+  
+} # end of checkForSpecialVariables
 
 sub processSET { 
   # -----------------------------------------------------------
@@ -6266,7 +6725,11 @@ sub processSET {
     $varName = trim($varName);
     $varValue = evaluateInfix(substituteVariables(trim($varValue)));
     displayDebug("Result is = $varValue",1,$currentSubroutine);
-    setVariable($varName,$varValue);    # set the variable
+    if ( ! checkForSpecialVariables($varName, $varValue) ) { # will return 0 if not special
+      setVariable($varName,$varValue);    # set the variable
+      displayDebug("Value $varValue assigned to $varName",1,$currentSubroutine);
+    }
+
   }
   else { # skip this card
     displayDebug("Skipped: $card. Sel Count = $skelSELCount, SEL Resume Level = $skelSEL_resumeLevel",2,$currentSubroutine);
@@ -6297,12 +6760,12 @@ sub processTAB {
       while ( $tmpTok ne "" ) {                   # loop through the )TAB parms
         if ( isNumeric($tmpTok) ) {               # only load in numeric values
           $tmpArray[$i] = $tmpTok-1;              # load them in less one to align them to a start of 0
-	  $i++;
-	}
-	else { # non-numeric tab entry
-	  displayError("Tab entry of $tmpTok ignored as it is not numeric",$currentSubroutine);
-	}
-	$tmpTok = getToken($card);
+      $i++;
+    }
+    else { # non-numeric tab entry
+      displayError("Tab entry of $tmpTok ignored as it is not numeric",$currentSubroutine);
+    }
+    $tmpTok = getToken($card);
         displayDebug("Token: $tmpTok",3,$currentSubroutine);
       }
     }
@@ -7129,7 +7592,7 @@ sub processSKELVERS {
   # -----------------------------------------------------------
   # Routine to process the SKELVERS statemnent. The format of the statement is:
   #
-  # )SKELVERS  $Id: processSkeleton.pm,v 1.109 2018/10/16 22:30:13 db2admin Exp db2admin $
+  # )SKELVERS  $Id: processSkeleton.pm,v 1.111 2018/10/26 04:12:30 db2admin Exp db2admin $
   #
   # Usage: processVERSION(<control card>)
   # Returns: sets the internal variable skelVers
@@ -7497,6 +7960,18 @@ sub processControlCard {
   elsif ( ($skelCardType eq ")GETCOOKIE") ) {    # GETCOOKIE Control Card - Retrieve and process supplied cookies 
     processGetCookie($card);
   }
+  elsif ( ($skelCardType eq ")INDEX") ) {    # INDEX Control Card - Create index element and set index variables
+    processINDEX($card);
+  }
+  elsif ( ($skelCardType eq ")INDEXTEST") ) {  # INDEXTEST Control Card - Check to see if an index element is required
+    processINDEXTEST($card);
+  }
+  elsif ( ($skelCardType eq ")INDEXCLEAR") ) {  # INDEXCLEAR Control Card - Flush out any unused index entries
+    processINDEXCLEAR($card);
+  }
+  elsif ( ($skelCardType eq ")INDEXOFF") ) {  # INDEXOFF Control Card - Turn off index processing
+    processINDEXOFF($card);
+  }
   elsif ( ($skelCardType eq ")SETCOOKIE") ) {    # SETCOOKIE Control Card - Set the cookie values
     processSetCookie($card);
   }
@@ -7740,7 +8215,7 @@ sub processFunction {
       displayError("INSTR function format is:\n)FUNC INSTR xxx = <search string> <string> [startpos|OCC:occurence]\nNote: It MUST have 2 parameters - Function will return -1",$currentSubroutine);
       return -1;
     }
-	
+    
     if ( $thirdParm eq '' ) { $thirdParm = 0 } # set a default value of zero for the third parm
     elsif ( ! isNumeric($thirdParm) ) { # parameter is not numeric so may be occurence 
       if ( uc(substr( $thirdParm . "   ", 0,4)) eq "OCC:" ) { # check if we are looking for an occurence value
@@ -7753,11 +8228,11 @@ sub processFunction {
           my $spot = index($baseString,$srchString,0); # first occurence
           my $occCount = 1;
           while ( ($occCount < $occ) & ( $spot > -1 ) ) { # still more searching to do
-	    $spot = index($baseString,$srchString,$spot+1); # find the next entry
-  	    $occCount++;
-	  }
-	  return $spot; # return the last location found
-  	}
+        $spot = index($baseString,$srchString,$spot+1); # find the next entry
+        $occCount++;
+      }
+      return $spot; # return the last location found
+    }
       }
       else { # not numeric and not OCC: so ignore it
         displayError("INSTR function format is:\n)FUNC INSTR xxx = <search string> <string> [startpos|OCC:occurence]\nNote: Third parm must be either numeric or start with OCC: - 3rd parm will be assumed 0",$currentSubroutine);
@@ -8237,22 +8712,22 @@ sub setDefinedVariablesForFile {
     
     if ( $condStart ne "" ) {                                                  # condition was supplied so check if we want to process this data card
       if ( uc($condStart) eq "DELIMITED" ) {                                   # delimited condition
-	if ( defined($delimArr[$condLen]) ) {                                  # If the condition field exists ....
-  	  $testValue = $delimArr[$condLen];                                    # assign the value to the test field
+    if ( defined($delimArr[$condLen]) ) {                                  # If the condition field exists ....
+      $testValue = $delimArr[$condLen];                                    # assign the value to the test field
         }
-	else { # test field doesn't exist
-	  $testValue = "KCKCTESTFAILEDKCKC";                                   # make up a value for the test value
-	  displayError("Conditional test on card $i in CTL File $fileRef failed to identify a field - this field ($fldName) was not assigned a value",$currentSubroutine);
-	}
+    else { # test field doesn't exist
+      $testValue = "KCKCTESTFAILEDKCKC";                                   # make up a value for the test value
+      displayError("Conditional test on card $i in CTL File $fileRef failed to identify a field - this field ($fldName) was not assigned a value",$currentSubroutine);
+    }
       }
       else { # not a delimited value ....
         if ( $condStart > length($fileRecord)) {                               # field start outside record
-	  $testValue = "KCKCTESTFAILEDKCKC";                                   # make up a value for the test value
-	  displayError("Positional test on card $i in CTL File $fileRef is outside the record - this field ($fldName) was not assigned a value",$currentSubroutine);
+      $testValue = "KCKCTESTFAILEDKCKC";                                   # make up a value for the test value
+      displayError("Positional test on card $i in CTL File $fileRef is outside the record - this field ($fldName) was not assigned a value",$currentSubroutine);
         }
         elsif ( $condStart + $condLen > length($fileRecord) ) {                # field end outside record
           $testValue = substr($fileRecord, $fldStart);
-	  displayError("Positional test on card $i in CTL File $fileRef stretches outside the record - this field ($fldName) was assigned a truncated value of $testValue",$currentSubroutine);
+      displayError("Positional test on card $i in CTL File $fileRef stretches outside the record - this field ($fldName) was assigned a truncated value of $testValue",$currentSubroutine);
         }
         else { # all looks good
           $testValue = substr($fileRecord, $fldStart, $fldLen) ;               # assign the value to the test field
@@ -8267,7 +8742,7 @@ sub setDefinedVariablesForFile {
       else {
         if ( evaluateCondition($testValue . $condValue) eq "True" ) {          # Check if the condition holds
           $setVar = "Yes";
-	}
+    }
       }
     }
     else { # no condition so just set the variable
@@ -8290,13 +8765,13 @@ sub setDefinedVariablesForFile {
         }
       }
       else { # it is a delimited field
-	if ( defined($delimArr[$fldLen]) ) {                     # Note: the data record has previously been split
-  	  $fldValue = $delimArr[$fldLen];                        # assign it the right value
+    if ( defined($delimArr[$fldLen]) ) {                     # Note: the data record has previously been split
+      $fldValue = $delimArr[$fldLen];                        # assign it the right value
         }
-	else { # not enough values in the record
-	  $fldValue = "";
-	  displayDebug("Delimited field on card $i in CTL File $fileRef failed to identify a field - this field ($fldName) was assigned the value blank",1,$currentSubroutine);
-	}
+    else { # not enough values in the record
+      $fldValue = "";
+      displayDebug("Delimited field on card $i in CTL File $fileRef failed to identify a field - this field ($fldName) was assigned the value blank",1,$currentSubroutine);
+    }
       }
       # and now just set the value for the variable ....
       displayDebug("Setting variable $fldName to a value of $fldValue",1,$currentSubroutine);
@@ -9001,5 +9476,4 @@ sub processSkeleton {
 } # end of processSkeleton
 
 1;
-
 
