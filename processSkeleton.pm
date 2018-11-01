@@ -2,7 +2,7 @@
 # --------------------------------------------------------------------
 # processSkeleton.pm
 #
-# $Id: processSkeleton.pm,v 1.111 2018/10/26 04:12:30 db2admin Exp db2admin $
+# $Id: processSkeleton.pm,v 1.112 2018/10/30 23:46:31 db2admin Exp db2admin $
 #
 # Description:
 # Script to process a skeleton
@@ -34,6 +34,16 @@
 # add inline CTL cards to the )DOF statement
 #
 # $Log: processSkeleton.pm,v $
+# Revision 1.112  2018/10/30 23:46:31  db2admin
+# 1. Correct a bug in testRoutine which meant that output was lost if outputMode was changed in the test skeleton
+# 2. Add in unique IDs for all of the automatically created table objects (to allow tables to be individually identified in CSS)
+# 3. Allow the use of the following variables (reflecting the current internal variable values):
+#    SKELDELIMITER SKELDEBUGMODULES SKELSHOWSQL SKELVERBOSESQLERRORS OUTPUTMODE
+#    SKELMAXOUTPUT SKELMAXROWS SKELMAXTABLEOUT SKELDEBUGLEVEL TESTROUTINES INDEXCASEINSENSITIVE
+# 4. Rewrite the routine to allow the setting of vaiables from internal variables to ease
+#    maintenance
+# 5. Allow outputMode to be set on the )SET or )ASET commands
+#
 # Revision 1.111  2018/10/26 04:12:30  db2admin
 # Various modifications:
 # 1. make indexing optionally case insensitive (defaults to acse insensitive)
@@ -572,6 +582,9 @@ my $skelDOEXECCount=0;                    # Count of )DOEXECs found. )DOEXEC inc
 my @execStack = ();                       # stack to hold the value of currentExecRef as new )DOEXECs encountered
 
 # Variables for tab processing
+my $CTABNumber = 0;                       # CTAB table number generated in this skeleton
+my $FTABNumber = 0;                       # FTAB table number generated in this skeleton
+
 my @tabEntries;                           # array holding tab stop entries
 my $checkAllWritten = 0;                  # flag indicating that javascript routine has already been written 
 my $CTAB_form_name = 'Form';              # form name 
@@ -721,7 +734,11 @@ sub testRoutine {
   $DBIModule = "DB2";
 
   if ( $outputMode eq "STDOUT" ) {
-    processSkeleton('testProcessSkeleton.skl');
+    my $a = processSkeleton('testProcessSkeleton.skl');
+    if ( $outputMode ne "STDOUT" ) { # mode changed in skeleton ...
+      print "==========================================\n";
+      print "output mode changed in skeleton .....\nReturned string is:\n$a\n";
+    }
   }
   else {
     my $a = processSkeleton('testProcessSkeleton.skl');
@@ -744,7 +761,7 @@ sub skelVersion {
   # -----------------------------------------------------------
 
   my $currentSubroutine = 'skelVersion'; 
-  my $ID = '$Id: processSkeleton.pm,v 1.111 2018/10/26 04:12:30 db2admin Exp db2admin $';
+  my $ID = '$Id: processSkeleton.pm,v 1.112 2018/10/30 23:46:31 db2admin Exp db2admin $';
   my @V = split(/ /,$ID);
   my $nameStr=$V[1];
   my @N = split(",",$nameStr);
@@ -2223,6 +2240,50 @@ sub substituteVariables {
             $skelFieldFound = "Yes";
             $skelFieldValue = generateUnique();
           }
+          elsif ( uc($varName) eq 'SKELDELIMITER' ) { 
+            $skelFieldValue = $skelDelimiter; 
+            $skelFieldFound = "Yes";
+          }
+          elsif ( uc($varName) eq 'SKELDEBUGMODULES' ) { 
+            $skelFieldValue = $skelDebugModules;
+            $skelFieldFound = "Yes";
+          }
+          elsif ( uc($varName) eq 'SKELSHOWSQL' ) { 
+            $skelFieldValue = $skelShowSQL;
+            $skelFieldFound = "Yes";      
+          }
+          elsif ( uc($varName) eq 'SKELVERBOSESQLERRORS' ) { 
+            $skelFieldValue = $skelVerboseSQLErrors;
+            $skelFieldFound = "Yes";      
+          }
+          elsif ( uc($varName) eq 'OUTPUTMODE' ) { 
+            $skelFieldValue = $outputMode;
+            $skelFieldFound = "Yes";      
+          }
+          elsif ( uc($varName) eq 'SKELMAXOUTPUT' ) { 
+            $skelFieldValue = $skelFieldValue;
+            $skelFieldFound = "Yes";      
+          }
+          elsif ( uc($varName) eq 'SKELMAXROWS' ) { 
+            $skelFieldValue = $skelMaxRows; 
+            $skelFieldFound = "Yes";
+          }
+          elsif ( uc($varName) eq 'SKELMAXTABLEOUT' ) { 
+            $skelFieldValue = $skelMaxTableOut; 
+          }
+          elsif ( uc($varName) eq 'SKELDEBUGLEVEL' ) { 
+            $skelFieldValue = $skelDebugLevel; 
+            $skelFieldFound = "Yes";
+          }
+          elsif ( uc($varName) eq 'TESTROUTINES' ) { 
+            $skelFieldValue = $testRoutines; 
+            $skelFieldFound = "Yes";
+          }
+          elsif ( uc($varName) eq 'INDEXCASEINSENSITIVE' ) { 
+            $skelFieldValue = $indexCaseInsensitive; 
+            $skelFieldFound = "Yes";
+          }
+
           # If still not found then check for a skeleton variable
           elsif ( defined($skelVarArray{$varName}) ) {
             $skelFieldFound = "Yes";
@@ -3095,7 +3156,8 @@ sub processFDOF {
           my $tStr = "";                                       # Initialise the output line for non http output
 
           if ( $outputMode eq "HTTP" ) {  # output it as a html table
-            outputLine("<table border=\"1\"><tr>\n");                   # output the start of table information
+            $FTABNumber++;
+            outputLine("<table border=\"1\" id=\"FTAB$FTABNumber\"><tr>\n");                   # output the start of table information
           }
           else {
             outputLine("\n");                                           # just doa new line
@@ -4111,7 +4173,7 @@ sub processGRAPH {
               }
           
               setVariable('LASTGRAPHCount',$cursorRowNumber{'GRAPH'});       
-              closeCursor('GRAPH');                # close the CTAB cursor
+              closeCursor('GRAPH');                # close the GRAPH cursor
               
               displayGraph_finish($graphOptions);                      # write out the end of the routine
             
@@ -4532,7 +4594,8 @@ sub processCTAB {
                 }
               }
           
-              outputLine("<table id=\"CTAB\" border=\"1\"><tr>");
+              $CTABNumber++;
+              outputLine("<table id=\"CTAB$CTABNumber\" border=\"1\"><tr>");
               if ( $#checkBox_names == -1 ) {  # if no ID was supplied then just make one up
                 outputLine("<th> <input type=\"checkbox\" name=\"checkAll_ID\" onclick=\"SetAllCheckBoxes('$CTAB_form_name', 'ID', document.forms['$CTAB_form_name'].elements['checkAll_ID'].checked);\"/></th>");
               }
@@ -5039,7 +5102,8 @@ sub processFTAB {
             # Write out headings ......
           
             if ( $outputMode eq "HTTP" ) {  # output it as a html table
-              outputLine("<table border=\"1\"><tr>\n");
+              $FTABNumber++;    # increment the count of FTAB's on this screen
+              outputLine("<table border=\"1\" id=\"FTAB$FTABNumber\"><tr>\n");
               for ( my $i=0; $i<$num_of_fields; $i++ ) {
                 outputLine("<th>" . $skelCursor{'FTAB'}->{NAME}->[$i] . "</th>");
                 $FTAB_output_len += length("<th>" . $skelCursor{'FTAB'}->{NAME}->[$i] . "</th>");
@@ -5324,7 +5388,8 @@ sub processFXTAB {
             # no more data - now just output it all
           
             if ( $outputMode eq "HTTP" ) {  # output it as a html table
-              outputLine("<table border=\"1\"><tr><td></td>\n");
+              $FTABNumber++;
+              outputLine("<table border=\"1\" id=\"FTAB$FTABNumber\"><tr><td></td>\n");
               foreach my $key1 ( sort keys %colData ) {
               outputLine("<th>$key1</th>");
                 foreach my $key2 (keys %{ $colData {$key1}} ) {
@@ -5566,7 +5631,8 @@ sub processFVTAB {
               displayDebug("In cursor loop",2,$currentSubroutine);
               $tStr = "";                                       # Initialise the output line 
               if ( $outputMode eq "HTTP" ) {                    # output it as a html table
-                outputLine("<table border=\"1\"><tr>");        # set new table row tag
+                $FTABNumber++;
+                outputLine("<table border=\"1\" id=\"FTAB$FTABNumber\"><tr>");        # set new table row tag
               }
               for ( my $i=0; $i<$num_of_fields; $i++ ) {
                 my $fieldType = $skelCursor{'FVTAB'}->{TYPE}->[$i]; # $fieldType is now the field type (CHAR, VARCHAR etc)
@@ -6665,35 +6731,40 @@ sub checkForSpecialVariables {
   my $returnValue = 0;
   my $searchName = " " . uc($varName) . " ";
   
+  my $charSpecialVariables = " SKELDELIMITER SKELDEBUGMODULES SKELSHOWSQL SKELVERBOSESQLERRORS OUTPUTMODE ";
+  my $numSpecialVariables  = " SKELMAXOUTPUT SKELMAXROWS SKELMAXTABLEOUT SKELDEBUGLEVEL TESTROUTINES INDEXCASEINSENSITIVE ";
+  
   displayDebug("Starting $varName <> $varValue",1,$currentSubroutine);
   
-  if ( ' SKELDELIMITER SKELMAXOUTPUT SKELMAXROWS SKELMAXTABLEOUT SKELDEBUGMODULES SKELSHOWSQL SKELDEBUGLEVEL SKELVERBOSESQLERRORS TESTROUTINES INDEXCASEINSENSITIVE ' =~ /$searchName/ ) { # it is a special variable  
+  if ( $charSpecialVariables =~ /$searchName/ ) { # it is a special variable that takes characters  
 
-    displayDebug("0 $varName = $varValue",1,$currentSubroutine);
+    displayDebug("0 $varName = $varValue",0,$currentSubroutine);
     
-    if ( ' SKELDELIMITER SKELDEBUGMODULES SKELSHOWSQL SKELVERBOSESQLERRORS ' =~ /' ' . uc($varName) . ' '/ ) { # character parameters allowed
-    displayDebug("1 $varName = $varValue",1,$currentSubroutine);
     if ( uc($varName) eq 'SKELDELIMITER' ) { $skelDelimiter = $varValue; }
-      elsif ( uc($varName) eq 'SKELDEBUGMODULES' ) { $skelDebugModules  = $varValue; }
-      elsif ( uc($varName) eq 'SKELSHOWSQL' ) { $skelShowSQL  = $varValue; }
-      elsif ( uc($varName) eq 'SKELVERBOSESQLERRORS' ) { $skelVerboseSQLErrors  = $varValue; }
+    elsif ( uc($varName) eq 'SKELDEBUGMODULES' ) { $skelDebugModules  = $varValue; }
+    elsif ( uc($varName) eq 'SKELSHOWSQL' ) { $skelShowSQL  = $varValue; }
+    elsif ( uc($varName) eq 'SKELVERBOSESQLERRORS' ) { $skelVerboseSQLErrors  = $varValue; }
+    elsif ( uc($varName) eq 'OUTPUTMODE' ) { 
+      displayDebug("outputMode set to $varValue",0,$currentSubroutine);
+      $outputMode  = $varValue; 
+    }
+    $returnValue = 1;
+    
+  }
+  elsif ( $numSpecialVariables =~ /$searchName/) { # these entries only take numeric values
+    if ( isNumeric($varValue) ) {
+      displayDebug("2 $varName = $varValue",1,$currentSubroutine);
+      if ( uc($varName) eq 'SKELMAXOUTPUT' ) { $skelMaxOutput  = $varValue; }
+      elsif ( uc($varName) eq 'SKELMAXROWS' ) { $skelMaxRows  = $varValue; }
+      elsif ( uc($varName) eq 'SKELMAXTABLEOUT' ) { $skelMaxTableOut  = $varValue; }
+      elsif ( uc($varName) eq 'SKELDEBUGLEVEL' ) { $skelDebugLevel  = $varValue; }
+      elsif ( uc($varName) eq 'TESTROUTINES' ) { $testRoutines  = $varValue; }
+      elsif ( uc($varName) eq 'INDEXCASEINSENSITIVE' ) { $indexCaseInsensitive = $varValue; }
       $returnValue = 1;
     }
-    else { # these entries only take numeric values
-      if ( isNumeric($varValue) ) {
-        displayDebug("2 $varName = $varValue",1,$currentSubroutine);
-        if ( uc($varName) eq 'SKELMAXOUTPUT' ) { $skelMaxOutput  = $varValue; }
-        elsif ( uc($varName) eq 'SKELMAXROWS' ) { $skelMaxRows  = $varValue; }
-        elsif ( uc($varName) eq 'SKELMAXTABLEOUT' ) { $skelMaxTableOut  = $varValue; }
-        elsif ( uc($varName) eq 'SKELDEBUGLEVEL' ) { $skelDebugLevel  = $varValue; }
-        elsif ( uc($varName) eq 'TESTROUTINES' ) { $testRoutines  = $varValue; }
-        elsif ( uc($varName) eq 'INDEXCASEINSENSITIVE' ) { $indexCaseInsensitive = $varValue; }
-        $returnValue = 1;
-      }
-      else {
-        displayError("Value must be numeric ($varName = $varValue) - will not be treated as special character",$currentSubroutine);
-        $returnValue = 0;    
-      }
+    else {
+      displayError("Value must be numeric ($varName = $varValue) - will not be treated as special character",$currentSubroutine);
+      $returnValue = 0;    
     }
     
   }
@@ -7592,7 +7663,7 @@ sub processSKELVERS {
   # -----------------------------------------------------------
   # Routine to process the SKELVERS statemnent. The format of the statement is:
   #
-  # )SKELVERS  $Id: processSkeleton.pm,v 1.111 2018/10/26 04:12:30 db2admin Exp db2admin $
+  # )SKELVERS  $Id: processSkeleton.pm,v 1.112 2018/10/30 23:46:31 db2admin Exp db2admin $
   #
   # Usage: processVERSION(<control card>)
   # Returns: sets the internal variable skelVers
@@ -9476,4 +9547,3 @@ sub processSkeleton {
 } # end of processSkeleton
 
 1;
-
