@@ -2,7 +2,7 @@
 # --------------------------------------------------------------------
 # processSkeleton.pm
 #
-# $Id: processSkeleton.pm,v 1.127 2018/12/14 04:09:41 db2admin Exp db2admin $
+# $Id: processSkeleton.pm,v 1.130 2018/12/28 04:26:09 db2admin Exp db2admin $
 #
 # Description:
 # Script to process a skeleton
@@ -31,6 +31,21 @@
 # ChangeLog:
 #
 # $Log: processSkeleton.pm,v $
+# Revision 1.130  2018/12/28 04:26:09  db2admin
+# further work nested )SEL bug
+#
+# Revision 1.129  2018/12/27 21:31:14  db2admin
+# correct a bug with nested )SEL, )SELELSE, )ENDSEL
+#
+# Revision 1.128  2018/12/26 23:32:26  db2admin
+#  Added in the following functions:
+#  1. TIMEDIFF - difference between 2 timestamps in minutes
+#  2. TIMEADJ - adds the second parameter (minutes) to the first parameter (timestamp)
+#  3. DISPLAYMIN - converts a number of minutes to a formatted display string broken into days, hours and minutes
+# 4. REFORMATTS - converts a timestamp of format 'Sep 17, 2017 6:00:07 PM' to a standard format
+# Added in the following standard variable
+#   SYSTIMESTAMP - represents the current time in timestamp format
+#
 # Revision 1.127  2018/12/14 04:09:41  db2admin
 # update LASTFDOFCount progressively as the file is read
 #
@@ -517,7 +532,7 @@ use strict;
 use warnings;
 use Data::Dumper qw(Dumper);
 use User::pwent; # for getpwuid and getgrnam
-use commonFunctions qw(commonVersion getOpt myDate trim $getOpt_optName $getOpt_optValue @myDate_ReturnDesc);
+use commonFunctions qw(trim ltrim rtrim commonVersion getOpt myDate $getOpt_web $getOpt_optName $getOpt_min_match $getOpt_optValue getOpt_form @myDate_ReturnDesc $myDate_debugLevel $getOpt_diagLevel $getOpt_calledBy $parmSeparators processDirectory $maxDepth $fileCnt $dirCnt localDateTime $datecalc_debugLevel displayMinutes timeDiff timeAdd timeAdj convertToTimestamp getCurrentTimestamp);
 use calculator qw(calcVersion evaluateInfix $calcDebugLevel $calcDebugModules);
 use Exporter;
 # use Data::UUID;           # only useful if package installed
@@ -831,7 +846,7 @@ sub skelVersion {
   # -----------------------------------------------------------
 
   my $currentSubroutine = 'skelVersion'; 
-  my $ID = '$Id: processSkeleton.pm,v 1.127 2018/12/14 04:09:41 db2admin Exp db2admin $';
+  my $ID = '$Id: processSkeleton.pm,v 1.130 2018/12/28 04:26:09 db2admin Exp db2admin $';
   my @V = split(/ /,$ID);
   my $nameStr=$V[1];
   my @N = split(",",$nameStr);
@@ -2311,6 +2326,10 @@ sub substituteVariables {
             $skelFieldFound = "Yes";
             $skelFieldValue =  getTime;
           }
+          elsif ( uc($varName) eq "SYSTIMESTAMP" ) {
+            $skelFieldFound = "Yes";
+            $skelFieldValue =  getCurrentTimestamp;
+          }
           elsif ( uc($varName) eq "SKELETON" ) {
             $skelFieldFound = "Yes";
             $skelFieldValue = $currentActiveSkel;
@@ -2874,6 +2893,8 @@ sub verifyControlCounts {
     $d = -2; # set held DOEXEC count to unknown
   }
   else { # pop away
+    $skelSEL_resumeLevel = pop(@controlStack);  # reload the resume level
+    $skelGotoENDSEL = pop(@controlStack);  # reload the value for skelGotoENDSEL
     $a = pop(@controlStack);               # should be SELCount
     $b = pop(@controlStack);               # should be DOTCount
     $c = pop(@controlStack);               # should be DOFCount
@@ -6538,7 +6559,7 @@ sub processXDOT {
   if ( $currentLinePosition > length($card) ) { # something has gone wrong ....
     displayError(")XDOT doesn't have enough parameters )XDOT will be ignored",$currentSubroutine);
     $skelDOTSkipCards = "Yes";              # skip cards till we get to a )ENDDOT at the same level
-    my $cnt = push(@controlStack,($skelDOEXECCount,$skelDOFCount,$skelDOTCount,$skelSELCount));      # save counts on entry
+    my $cnt = push(@controlStack,($skelDOEXECCount,$skelDOFCount,$skelDOTCount,$skelSELCount,$skelGotoENDSEL,$skelSEL_resumeLevel));      # save counts on entry
     $skelDOTCount++;
     $skelDOT_resumeLevel = $skelDOTCount - 1;   # level at which processing will be resumed (will be tested for each )ENDDOT encountered)
   }
@@ -6583,7 +6604,7 @@ sub establishDOTLoop {
   if ( ( $skelSelSkipCards eq "No" ) ) { # not excluded because of a failed )SEL
     if ( ( $skelDOTSkipCards eq "No" ) ) { # not excluded because of a )DOT that returned zero rows
       setVariable('LASTDOTCount','0');               # initialise variable
-      my $cnt = push(@controlStack,($skelDOEXECCount,$skelDOFCount,$skelDOTCount,$skelSELCount));      # save counts on entry
+      my $cnt = push(@controlStack,($skelDOEXECCount,$skelDOFCount,$skelDOTCount,$skelSELCount,$skelGotoENDSEL,$skelSEL_resumeLevel));      # save counts on entry
       displayDebug("PUSHING onto stack - #entries $cnt",2,$currentSubroutine);
       displayDebug("Pushing control counts: \$skelDOFCount=$skelDOFCount,\$skelDOTCount=$skelDOTCount,\$skelSELCount=$skelSELCount",1,$currentSubroutine);
       $skelDOTCount++;                     # Keep track of )DOT control cards encountered
@@ -6831,7 +6852,7 @@ sub processCELLSTYLE {
       $styleCount++;
       $styleCount = substr("000" . $styleCount,length($styleCount)); # pad out to 3 chars
       $cellStyle{$column}{$styleCount . $condition} = $style; 
-      displayDebug("Processed )CELLSTYLE ($currentSkelLine). Sel Count = $skelSELCount, SEL Resume Level = $skelSEL_resumeLevel",0,$currentSubroutine);
+      displayDebug("Processed )CELLSTYLE ($currentSkelLine). Sel Count = $skelSELCount, SEL Resume Level = $skelSEL_resumeLevel",1,$currentSubroutine);
       displayDebug("style = $style, column = $column, condition = $condition, styleCount = $styleCount",0,$currentSubroutine);
       return;
     }
@@ -6856,7 +6877,7 @@ sub processCELLSTYLE {
     $styleCount = substr("000" . $styleCount,length($styleCount)); # pad out to 3 chars
     $cellStyle{$column}{$styleCount . $condition} = $style; 
       
-    displayDebug("Processed )CELLSTYLE ($currentSkelLine). Sel Count = $skelSELCount, SEL Resume Level = $skelSEL_resumeLevel",0,$currentSubroutine);
+    displayDebug("Processed )CELLSTYLE ($currentSkelLine). Sel Count = $skelSELCount, SEL Resume Level = $skelSEL_resumeLevel",1,$currentSubroutine);
     displayDebug("style = $style, column = $column, condition = $condition",0,$currentSubroutine);
   }
   else {
@@ -6918,7 +6939,7 @@ sub processROWSTYLE {
       $rowStyle{$styleCount . $condition} = $style; 
     }
       
-    displayDebug("Processed )ROWSTYLE ($currentSkelLine). Sel Count = $skelSELCount, SEL Resume Level = $skelSEL_resumeLevel",0,$currentSubroutine);
+    displayDebug("Processed )ROWSTYLE ($currentSkelLine). Sel Count = $skelSELCount, SEL Resume Level = $skelSEL_resumeLevel",1,$currentSubroutine);
     displayDebug("style = $style, condition = $condition, styleCount = $styleCount",0,$currentSubroutine);
     
   }
@@ -7023,10 +7044,12 @@ sub processSEL {
   
   my $card = shift;  
 
-   if ( ( $skelSelSkipCards eq "No" ) && ( $skelDOTSkipCards eq "No" ) ) { # not skipping cards
-    my $cnt = push(@controlStack,($skelDOEXECCount,$skelDOFCount,$skelDOTCount,$skelSELCount));      # save counts on entry
+  displayDebug("SEL Entry counts (" . $currentSkelLine . ") : \$skelSELCount=$skelSELCount,\$skelSelSkipCards=$skelSelSkipCards,\$skelGotoENDSEL=$skelGotoENDSEL,\$skelSEL_resumeLevel=$skelSEL_resumeLevel",1,$currentSubroutine);
+
+  if ( ( $skelSelSkipCards eq "No" ) && ( $skelDOTSkipCards eq "No" ) ) { # not skipping cards
+    my $cnt = push(@controlStack,($skelDOEXECCount,$skelDOFCount,$skelDOTCount,$skelSELCount,$skelGotoENDSEL,$skelSEL_resumeLevel));      # save counts on entry
     displayDebug("PUSHING onto stack - #entries $cnt",2,$currentSubroutine);
-    displayDebug("Pushing control counts: \$skelDOFCount=$skelDOFCount,\$skelDOTCount=$skelDOTCount,\$skelSELCount=$skelSELCount",1,$currentSubroutine);
+    displayDebug("Pushing control counts: \$skelDOEXECCount=$skelDOEXECCount,\$skelDOFCount=$skelDOFCount,\$skelDOTCount=$skelDOTCount,\$skelSELCount=$skelSELCount,\$skelGotoENDSEL=$skelGotoENDSEL,\$skelSEL_resumeLevel=$skelSEL_resumeLevel",1,$currentSubroutine);
     $skelSELCount++;                                                      # keep track ofthe )SEL level we are at
     my $tmpI = trim(substr($card,5));                                     # tmpI now holds the condition
     displayDebug("Passing the following condition (SEL) : $tmpI",2,$currentSubroutine);
@@ -7048,6 +7071,8 @@ sub processSEL {
     displayDebug("Skipped: $card, Sel Count = $skelSELCount, SEL Resume Level = $skelSEL_resumeLevel",2,$currentSubroutine);
   }
 
+  displayDebug("SEL Exit counts (" . $currentSkelLine . ") : \$skelSELCount=$skelSELCount,\$skelSelSkipCards=$skelSelSkipCards,\$skelGotoENDSEL=$skelGotoENDSEL,\$skelSEL_resumeLevel=$skelSEL_resumeLevel",1,$currentSubroutine);
+
 } # end of processSEL
 
 sub processSELELSE { 
@@ -7065,50 +7090,57 @@ sub processSELELSE {
   my $card = shift;  
   my $tmpI ;                    # will contain the )SELELSE conditions
   
+  displayDebug("SELELSE Entry counts (" . $currentSkelLine . ") : \$skelSELCount=$skelSELCount,\$skelSelSkipCards=$skelSelSkipCards,\$skelGotoENDSEL=$skelGotoENDSEL,\$skelSEL_resumeLevel=$skelSEL_resumeLevel",1,$currentSubroutine);
+
   if ( ( $skelGotoENDSEL eq "No" ) ) {                         # no successful SEL/SELELSE yet so need to keep checking
     if ( ( $skelDOTSkipCards eq "No" ) ) {                     # not skipping cards because we are within a )DOT
       if ( ( $skelSelSkipCards eq "Yes" ) ) {                  # skipping SEL cards because previouse check failed so keep checking
-    if ( trim($card) eq ")SELELSE" ) {                     # the card has no conditions so is a catch all
-      if ( $skelSELCount == $skelSEL_resumeLevel + 1 ) {   # check to see if we are back in play doing checks
-        $skelSelSkipCards = "No";                          # process the cards in this )SELELSE group
-        $skelGotoENDSEL = "Yes";                           # after processing goto the )ENDSEL
-      }
-    }
-    else { # the SELELSE has a condition parameter
-          $tmpI = trim(substr($card,9));
-          displayDebug("Passing the following condition (SELELSE) : $tmpI",2,$currentSubroutine);
+        if ( trim($card) eq ")SELELSE" ) {                     # the card has no conditions so is a catch all
+          if ( $skelSELCount == $skelSEL_resumeLevel + 1 ) {   # check to see if we are back in play doing checks
+            $skelSelSkipCards = "No";                          # process the cards in this )SELELSE group
+            $skelGotoENDSEL = "Yes";                           # after processing goto the )ENDSEL
+          }
+        }
+        else { # the SELELSE has a condition parameter
+          if ( $skelSELCount == $skelSEL_resumeLevel + 1 ) {   # check to see if we are back in play doing checks
+            $tmpI = trim(substr($card,9));
+            displayDebug("Passing the following condition (SELELSE) : $tmpI",2,$currentSubroutine);
           
-          if ( processCondition($tmpI) ) { # returns 1 if condition is true
-            displayDebug("Condition evaluated to True",2,$currentSubroutine);
-        $skelSelSkipCards = "No";                        # process the cards in this )SELELSE group
-            $skelGotoENDSEL = "Yes";                         # indicates that after the next ENDSEL we need to skip to the )ENDSEL for this )SEL                  
+            if ( processCondition($tmpI) ) { # returns 1 if condition is true
+              displayDebug("Condition evaluated to True",2,$currentSubroutine);
+              $skelSelSkipCards = "No";                        # process the cards in this )SELELSE group
+              $skelGotoENDSEL = "Yes";                         # indicates that after the next ENDSEL we need to skip to the )ENDSEL for this )SEL                  
+            }
+            else { # evaluated false
+              displayDebug("Condition evaluated to False",2,$currentSubroutine);
+              $skelSelSkipCards = "Yes";                                        # )sel is false so skip cards until the next )SELELSE or )ENDSEL
+#             $skelSEL_resumeLevel will be returned to its correct value in the processing of verifyControlCounts
+              $skelGotoENDSEL = "No";                                           # indicates that we haven't finished with this )SEL as yet - there may be a )SELELSE that will be true
+            }  
           }
-          else { # evaluated false
-            displayDebug("Condition evaluated to False",2,$currentSubroutine);
-            $skelSelSkipCards = "Yes";                                        # )sel is false so skip cards until the next )SELELSE or )ENDSEL
-            $skelSEL_resumeLevel = $skelSELCount - 1;                         # indicator to show at what stack level the processing should restart (to copy with )SEL within )SEL
-            $skelGotoENDSEL = "No";                                           # indicates that we haven't finished with this )SEL as yet - there may be a )SELELSE that will be true
-          }
-    }
+        }
       }  
       else { # SELSkipCards was false which means that pervious SEL/SELELSE was satisfied
         $skelSelSkipCards = "Yes";                           # start skipping cards
-    $skelSEL_resumeLevel = $skelSELCount -1;             # set the resume level as we will be skipping cards now
+#       $skelSEL_resumeLevel will be returned to its correct value in the processing of verifyControlCounts
         if ( $skelSELCount == 0 ) { # if true then there is a problem as there is an unmatch )SELELSE
           displayError(")SELELSE without )SEL. Card will be ignored",$currentSubroutine);
           $skelSelSkipCards = "No";
-    }
+        }
         displayDebug("Skipped: $card. Sel Count = $skelSELCount, SEL Resume Level = $skelSEL_resumeLevel",2,$currentSubroutine);
       }
       displayDebug("Processed )SELELSE. Sel Count = $skelSELCount, SEL Resume Level = $skelSEL_resumeLevel",1,$currentSubroutine);
     }
   }
   else { # keep skipping until we get to a )ENDSEL
-    $skelSEL_resumeLevel = $skelSELCount -1;     # dont think this is right          
+#    $skelSEL_resumeLevel will be returned to its correct value in the processing of verifyControlCounts
     $skelSelSkipCards = "Yes";                                # start skipping cards
+    $skelSEL_resumeLevel = $skelSELCount - 1;                 # indicator to show at what stack level the processing should restart (to copy with )SEL within )SEL
     displayDebug("Skipped: $card. Sel Count = $skelSELCount, SEL Resume Level = $skelSEL_resumeLevel",2,$currentSubroutine);
   }
   
+  displayDebug("SELELSE Exit counts (" . $currentSkelLine . ") : \$skelSELCount=$skelSELCount,\$skelSelSkipCards=$skelSelSkipCards,\$skelGotoENDSEL=$skelGotoENDSEL,\$skelSEL_resumeLevel=$skelSEL_resumeLevel",1,$currentSubroutine);
+
 } # end of processSELELSE
 
 sub processENDSEL { 
@@ -7124,11 +7156,13 @@ sub processENDSEL {
   
   my $card = shift;  
   
+  displayDebug("ENDSEL Entry counts (" . $currentSkelLine . ") : \$skelSELCount=$skelSELCount,\$skelSelSkipCards=$skelSelSkipCards,\$skelGotoENDSEL=$skelGotoENDSEL,\$skelSEL_resumeLevel=$skelSEL_resumeLevel",1,$currentSubroutine);
+
   displayDebug(")ENDSEL: \$skelDOTSkipCards=$skelDOTSkipCards, \$skelSelSkipCards=$skelSelSkipCards, \$skelSELCount=$skelSELCount, \$skelSEL_resumeLevel=$skelSEL_resumeLevel\n",1,$currentSubroutine);
   if ( $skelDOTSkipCards eq "No" ) {   # not skipping cards (caused when )DOT returns no rows .... we're waiting for a )ENDDOT
     if ( $skelSelSkipCards eq "No" ) { # not skipping cards because of a failed )SEL
       $skelSELCount--;                                                        # Reduce the count of unmatched )DOTs
-      $skelGotoENDSEL = "No";                                           # reset the goto )ENDSEL flag        
+#     $skelGotoENDSEL will be returned to its correct value in the processing of verifyControlCounts
       verifyControlCounts();
       displayDebug("Processed )ENDSEL ($currentSkelLine). Sel Count = $skelSELCount, SEL Resume Level = $skelSEL_resumeLevel",1,$currentSubroutine);
     }
@@ -7136,7 +7170,7 @@ sub processENDSEL {
       $skelSELCount--;
       if ( $skelSELCount == $skelSEL_resumeLevel ) {               # if we are at a matching )ENDSEL level                  
         $skelSelSkipCards = "No";                                         # stop skipping cards
-        $skelGotoENDSEL = "No";                                           # reset the goto )ENDSEL flag        
+#       $skelGotoENDSEL will be returned to its correct value in the processing of verifyControlCounts
         verifyControlCounts();
         displayDebug("Processed )ENDSEL ($currentSkelLine) .... Processing of cards resumed. Sel Count = $skelSELCount, SEL Resume Level = $skelSEL_resumeLevel",1,$currentSubroutine);
       }
@@ -7148,6 +7182,9 @@ sub processENDSEL {
   else { # just adjust the count (as we would have incremented the count on the )SEL
     $skelSELCount--;
   }
+
+  displayDebug("ENDSEL Exit counts (" . $currentSkelLine . ") : \$skelSELCount=$skelSELCount,\$skelSelSkipCards=$skelSelSkipCards,\$skelGotoENDSEL=$skelGotoENDSEL,\$skelSEL_resumeLevel=$skelSEL_resumeLevel",1,$currentSubroutine);
+
 } # end of processENDSEL
 
 sub processASET { 
@@ -7463,7 +7500,7 @@ sub processDOEXEC {
     }
     displayDebug("Command entered ($card): $execCMD",1,$currentSubroutine);
 
-    $cnt = push(@controlStack,($skelDOEXECCount,$skelDOFCount,$skelDOTCount,$skelSELCount));      # save counts on entry
+    $cnt = push(@controlStack,($skelDOEXECCount,$skelDOFCount,$skelDOTCount,$skelSELCount,$skelGotoENDSEL,$skelSEL_resumeLevel));      # save counts on entry
     displayDebug("PUSHING onto stack - #entries $cnt",2,$currentSubroutine);
     displayDebug("Pushing control counts: \$skelDOEXECCount=$skelDOEXECCount,\$skelDOFCount=$skelDOFCount,\$skelDOTCount=$skelDOTCount,\$skelSELCount=$skelSELCount",2,$currentSubroutine);
 
@@ -7641,7 +7678,7 @@ sub processDOF {
     my $lit = getToken($card);                               # should be the literal 'USING'
     my $CTLFileName = getToken($card);                       # (CTLFILENAME) The file name holding the control information describing the file
 
-    $cnt = push(@controlStack,($skelDOEXECCount,$skelDOFCount,$skelDOTCount,$skelSELCount));      # save counts on entry
+    $cnt = push(@controlStack,($skelDOEXECCount,$skelDOFCount,$skelDOTCount,$skelSELCount,$skelGotoENDSEL,$skelSEL_resumeLevel));      # save counts on entry
     displayDebug("PUSHING onto stack - #entries $cnt",2,$currentSubroutine);
     displayDebug("Pushing control counts: \$skelDOFCount=$skelDOFCount,\$skelDOTCount=$skelDOTCount,\$skelSELCount=$skelSELCount",2,$currentSubroutine);
 
@@ -7727,14 +7764,27 @@ sub processDOF {
         $skelFileStatus{$fileRef} = 0;                               # either it will stay 0 which will mean the file is empty or it will be incremented by readDataFileRecord
         # save the file handle
         $skelFileRecord = readDataFileRecord($skelFileHandle{$fileRef}, $fileRef, 'F');
-        if ( defined($skelFileRecord) )  { # not EOF
-          setDefinedVariablesForFile($fileRef, $skelFileRecord); # Set all of the variables
-        } #EOF
-        else {
-          displayError("File $skelFileRecord is empty. One pass through the loop will be performed.",$currentSubroutine);
-          undef $DOFLocation{$fileRef};                          # undefine the loop start pos to free it up
-          undef $skelFileHandle{$fileRef};                       # undefine the file handle to free it up
+        setDefinedVariablesForFile($fileRef, $skelFileRecord); # Set all of the variables
+        if ( $selectCond ne '' ) { # conditions exist so not all records being processed
+          my $recordNotOK = 1;
+          if ( evaluateCondition(substituteVariables($selectCond)) ) { # record selected for processing
+            $recordNotOK = 0;        # record is now OK to process
+          }
+          while ( defined($skelFileRecord) && ($recordNotOK) ) {
+            $skelFileRecord = readDataFileRecord($skelFileHandle{$fileRef}, $fileRef, 'F');
+            if ( defined($skelFileRecord) )  { # not EOF
+              setDefinedVariablesForFile($fileRef, $skelFileRecord); # Set all of the variables
+              if ( evaluateCondition(substituteVariables($selectCond)) ) { # record selected for processing
+                $recordNotOK = 0;        # record is now OK to process
+              }
+            }
+          } 
         }
+      } 
+      if ( ! defined($skelFileRecord) ) { #EOF
+        displayError("File $skelFileRecord is empty. One pass through the loop will be performed.",$currentSubroutine);
+        undef $DOFLocation{$fileRef};                          # undefine the loop start pos to free it up
+        undef $skelFileHandle{$fileRef};                       # undefine the file handle to free it up
       }
     }
     else { # control file wasn't loaded so nothing can be done
@@ -7925,12 +7975,29 @@ sub processENDDOF {
     else { # file was opened and used the last time data was read from it ..... try and read more data
       displayDebug("File $currentFileRef  being read",2,$currentSubroutine);
       my $skelFileRecord = readDataFileRecord($skelFileHandle{$currentFileRef}, $currentFileRef, 'F');
+      setDefinedVariablesForFile($currentFileRef, $skelFileRecord); # Set all of the variables
+      
+      if ( $selectCond ne '' ) { # conditions exist so not all records being processed
+        my $recordNotOK = 1;
+        if ( evaluateCondition(substituteVariables($selectCond)) ) { # record selected for processing
+          $recordNotOK = 0;        # record is now OK to process
+        }
+        while ( defined($skelFileRecord) && ($recordNotOK) ) {
+          $skelFileRecord = readDataFileRecord($skelFileHandle{$currentFileRef}, $currentFileRef, 'F');
+          if ( defined($skelFileRecord) )  { # not EOF
+            setDefinedVariablesForFile($currentFileRef, $skelFileRecord); # Set all of the variables
+            if ( evaluateCondition(substituteVariables($selectCond)) ) { # record selected for processing
+              $recordNotOK = 0;        # record is now OK to process
+            }
+          }
+        } 
+      }
+      
       if ( defined($skelFileRecord) ) { # not EOF so process the record (otherwise just let it flow through)
         displayDebug("Record returned from file $currentFileRef ",2,$currentSubroutine);
-        setDefinedVariablesForFile($currentFileRef, $skelFileRecord);            # Set all of the variables
         $currentSkelLine = $DOFLocation{$currentFileRef} ;
       }
-      else { # end of file so close up shop
+      else { # EOF so time to tidy up
         displayDebug("No more records in $currentFileRef",2,$currentSubroutine);
         undef $skelFileStatus{$currentFileRef} ;                 # clear out the file status
         if ( defined( $DOFLocation{$currentFileRef}) )    { undef $DOFLocation{$currentFileRef}; }
@@ -7943,7 +8010,6 @@ sub processENDDOF {
         $skelDOFCount--;                                           # decrement )DOF count
         displayDebug("Processed )ENDDOF. DOF Count = $skelDOFCount",1,$currentSubroutine);
         verifyControlCounts();
-    
       }
     }
   }
@@ -8241,7 +8307,7 @@ sub processSKELVERS {
   # -----------------------------------------------------------
   # Routine to process the SKELVERS statemnent. The format of the statement is:
   #
-  # )SKELVERS  $Id: processSkeleton.pm,v 1.127 2018/12/14 04:09:41 db2admin Exp db2admin $
+  # )SKELVERS  $Id: processSkeleton.pm,v 1.130 2018/12/28 04:26:09 db2admin Exp db2admin $
   #
   # Usage: processVERSION(<control card>)
   # Returns: sets the internal variable skelVers
@@ -8786,6 +8852,11 @@ sub processFunction {
   #     WEBSAFE          - Returns a string with all special characters converted to HTML equivalents
   #     LOWER            - Returns the string transformed to all lower case
   #     UPPER            - Returns the string transformed to all upper case
+  #
+  #     TIMEDIFF         - difference in minutes between 2 dates
+  #     DISPLAYMIN       - Takes mins and returns a display variable of days/hrs/mins
+  #     TIMEADJ          - varies a tyimestamp by a number of minutes
+  #     REFORMATTS       - Converts 'Sep 17, 2017 6:00:07 PM' to standard timestamp format
   #     
   # Usage: processFunction(<Function>,<Parameters>)
   # Returns: the result of the function applied to the parameters
@@ -8799,6 +8870,8 @@ sub processFunction {
   my $i;
 
   displayDebug("Function $function will process the following parms: $funcParm",2,$currentSubroutine);
+  
+  $currentSubroutine .= " $function"; # add in the function name for debug purposes
 
   if ( uc($function) eq "INT" ) { # INT function
     return int($funcParm);
@@ -9219,6 +9292,79 @@ sub processFunction {
     return $baseString;                         # 
 
   } # end of WEBSAFE function
+  elsif ( uc($function) eq "TIMEDIFF" ) { # TIMEDIFF function
+    my $time1 = getToken($card);                         # timestamp 1
+    my $time2 = getToken($card);                         # timestamp 2
+
+    # TIMEDIFF MUST have at least 1 parm
+
+    if ( $time1 eq "" ) { # no parameters have been displayed
+      displayError("TIMEDIFF function format is:\n)FUNC TIMEDIFF xxx = <TIMESTAMP string> [<TIMESTAMP string>]\nNote: It MUST have at least 1 parameter - Function will return 0",$currentSubroutine);
+      return '0';
+    }
+    
+    if ( $time2 eq '' ) { # second parameter not set - default it to current timestamp
+      $time2 = getCurrentTimestamp();
+    }
+
+    displayDebug("TS1=$time1, TS2=$time2",2,$currentSubroutine);
+
+    return timeDiff($time1, $time2);   # return the time difference
+    
+  }  # end of TIMEDIFF function
+  elsif ( uc($function) eq "TIMEADJ" ) { # TIMEADJ function
+    my $time1 = getToken($card);                         # timestamp 1
+    my $mins = getToken($card);                          # adjustment minutes
+    
+    # TIMEADJ MUST have at least 1 parm
+     
+
+    if ( $time1 eq "" ) { # no parameters have been displayed
+      displayError("TIMEADJ function format is:\n)FUNC TIMEADJ xxx = <TIMESTAMP string> [<minutes>]\nNote: It MUST have at least 1 parameter - Function will return current timestamp",$currentSubroutine);
+      return getCurrentTimestamp();
+    }
+    
+    if ( $mins eq '' ) { # second parameter not set - just return the first parameter
+      return $time1;
+    }
+
+    displayDebug("TS1=$time1, Mins=$mins",2,$currentSubroutine);
+
+    return timeAdj($time1, $mins);   # return the time difference
+    
+  }  # end of TIMEADJ function
+  elsif ( uc($function) eq "DISPLAYMIN" ) { # DISPLAYMIN function
+    my $mins = getToken($card);                          # number of minutes to be formatted
+    
+    # DISPLAYMIN MUST have at least 1 parm
+     
+
+    if ( $mins eq "" ) { # no parameters have been displayed
+      displayError("DISPLAYMIN function format is:\n)FUNC DISPLAYMIN xxx = <TIMESTAMP string>\nNote: It MUST have at least 1 parameter - Function will return 'o mins'",$currentSubroutine);
+      return '0 mins';
+    }
+    
+    displayDebug("mins=$mins",2,$currentSubroutine);
+
+    return displayMinutes ($mins);   # return the formatted minutes
+    
+  }  # end of DISPLAYMIN function
+  elsif ( uc($function) eq "REFORMATTS" ) { # REFORMATTS function
+    my $TS = getToken($card);               # timestamp to be reformatted (Format: Sep 17, 2017 6:00:07 PM)
+    
+    # REFORMATTS MUST have at least 1 parm
+     
+
+    if ( $TS eq "" ) { # no parameters have been displayed
+      displayError("REFORMATTS function format is:\n)FUNC REFORMATTS xxx = <Alt TIMESTAMP string>\nNote: It MUST have at least 1 parameter - Function will return nothing",$currentSubroutine);
+      return '';
+    }
+    
+    displayDebug("TS=$TS",2,$currentSubroutine);
+
+    return convertToTimestamp($TS);   # return the re-formatted timestamp
+    
+  }  # end of REFORMATTS function
 
   displayError("Function $function unknown. Known functions are:\n     INT, TRIM, LTRIM, RTRIM, LEN, SPLIT, INSTR, LEFT, RIGHT, MID, REMOVECRLF, REMOVEWHITESPACE, FORMATSQL,\n     GDATE, JDATE, PAD\nFunction will return nothing",$currentSubroutine);
   return "";
