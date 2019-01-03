@@ -2,7 +2,7 @@
 # --------------------------------------------------------------------
 # processSkeleton.pm
 #
-# $Id: processSkeleton.pm,v 1.130 2018/12/28 04:26:09 db2admin Exp db2admin $
+# $Id: processSkeleton.pm,v 1.131 2019/01/02 20:46:23 db2admin Exp db2admin $
 #
 # Description:
 # Script to process a skeleton
@@ -31,6 +31,10 @@
 # ChangeLog:
 #
 # $Log: processSkeleton.pm,v $
+# Revision 1.131  2019/01/02 20:46:23  db2admin
+# 1. Ensure that no processing is done in DOF or FDOF after you reach end of file
+# 2. Clear select  condition after each )DOF and )ENDDOF [selectCond is a one use only variable]
+#
 # Revision 1.130  2018/12/28 04:26:09  db2admin
 # further work nested )SEL bug
 #
@@ -846,7 +850,7 @@ sub skelVersion {
   # -----------------------------------------------------------
 
   my $currentSubroutine = 'skelVersion'; 
-  my $ID = '$Id: processSkeleton.pm,v 1.130 2018/12/28 04:26:09 db2admin Exp db2admin $';
+  my $ID = '$Id: processSkeleton.pm,v 1.131 2019/01/02 20:46:23 db2admin Exp db2admin $';
   my @V = split(/ /,$ID);
   my $nameStr=$V[1];
   my @N = split(",",$nameStr);
@@ -3375,6 +3379,7 @@ sub processFDOF {
             outputLine("\n");                                           # just doa new line
           }
           setVariable('LASTFDOFCount',$skelFileStatus{$fileRef});
+          $selectCond = '';              # turn off any prevailing select conditions (they only last one use)
           
           undef $skelFileHandle{$fileRef};                       # undefine the file handle to free it up
           undef $skelFileStatus{$fileRef};                       # undefine the status entry
@@ -7764,21 +7769,23 @@ sub processDOF {
         $skelFileStatus{$fileRef} = 0;                               # either it will stay 0 which will mean the file is empty or it will be incremented by readDataFileRecord
         # save the file handle
         $skelFileRecord = readDataFileRecord($skelFileHandle{$fileRef}, $fileRef, 'F');
-        setDefinedVariablesForFile($fileRef, $skelFileRecord); # Set all of the variables
-        if ( $selectCond ne '' ) { # conditions exist so not all records being processed
-          my $recordNotOK = 1;
-          if ( evaluateCondition(substituteVariables($selectCond)) ) { # record selected for processing
-            $recordNotOK = 0;        # record is now OK to process
-          }
-          while ( defined($skelFileRecord) && ($recordNotOK) ) {
-            $skelFileRecord = readDataFileRecord($skelFileHandle{$fileRef}, $fileRef, 'F');
-            if ( defined($skelFileRecord) )  { # not EOF
-              setDefinedVariablesForFile($fileRef, $skelFileRecord); # Set all of the variables
-              if ( evaluateCondition(substituteVariables($selectCond)) ) { # record selected for processing
-                $recordNotOK = 0;        # record is now OK to process
-              }
+        if ( defined($skelFileRecord) ) { # not EOF
+          setDefinedVariablesForFile($fileRef, $skelFileRecord); # Set all of the variables
+          if ( $selectCond ne '' ) { # conditions exist so not all records being processed
+            my $recordNotOK = 1;
+            if ( evaluateCondition(substituteVariables($selectCond)) ) { # record selected for processing
+              $recordNotOK = 0;        # record is now OK to process
             }
-          } 
+            while ( defined($skelFileRecord) && ($recordNotOK) ) {
+              $skelFileRecord = readDataFileRecord($skelFileHandle{$fileRef}, $fileRef, 'F');
+              if ( defined($skelFileRecord) )  { # not EOF
+                setDefinedVariablesForFile($fileRef, $skelFileRecord); # Set all of the variables
+                if ( evaluateCondition(substituteVariables($selectCond)) ) { # record selected for processing
+                  $recordNotOK = 0;        # record is now OK to process
+                }
+              }
+            } 
+          }
         }
       } 
       if ( ! defined($skelFileRecord) ) { #EOF
@@ -7975,24 +7982,28 @@ sub processENDDOF {
     else { # file was opened and used the last time data was read from it ..... try and read more data
       displayDebug("File $currentFileRef  being read",2,$currentSubroutine);
       my $skelFileRecord = readDataFileRecord($skelFileHandle{$currentFileRef}, $currentFileRef, 'F');
-      setDefinedVariablesForFile($currentFileRef, $skelFileRecord); # Set all of the variables
+
+      if (  defined($skelFileRecord) ) { # not EOF so process the record (otherwise just let it flow through)
+        setDefinedVariablesForFile($currentFileRef, $skelFileRecord); # Set all of the variables
       
-      if ( $selectCond ne '' ) { # conditions exist so not all records being processed
-        my $recordNotOK = 1;
-        if ( evaluateCondition(substituteVariables($selectCond)) ) { # record selected for processing
-          $recordNotOK = 0;        # record is now OK to process
-        }
-        while ( defined($skelFileRecord) && ($recordNotOK) ) {
-          $skelFileRecord = readDataFileRecord($skelFileHandle{$currentFileRef}, $currentFileRef, 'F');
-          if ( defined($skelFileRecord) )  { # not EOF
-            setDefinedVariablesForFile($currentFileRef, $skelFileRecord); # Set all of the variables
-            if ( evaluateCondition(substituteVariables($selectCond)) ) { # record selected for processing
-              $recordNotOK = 0;        # record is now OK to process
-            }
+        if ( $selectCond ne '' ) { # conditions exist so not all records being processed
+          my $recordNotOK = 1;
+          if ( evaluateCondition(substituteVariables($selectCond)) ) { # record selected for processing
+            $recordNotOK = 0;        # record is now OK to process
           }
-        } 
+          while ( defined($skelFileRecord) && ($recordNotOK) ) {
+            $skelFileRecord = readDataFileRecord($skelFileHandle{$currentFileRef}, $currentFileRef, 'F');
+            if ( defined($skelFileRecord) )  { # not EOF
+              setDefinedVariablesForFile($currentFileRef, $skelFileRecord); # Set all of the variables
+              if ( evaluateCondition(substituteVariables($selectCond)) ) { # record selected for processing
+                $recordNotOK = 0;        # record is now OK to process
+              }
+            }
+          } 
+        }
       }
       
+      # need to check again here in case the while loop has found the end of file
       if ( defined($skelFileRecord) ) { # not EOF so process the record (otherwise just let it flow through)
         displayDebug("Record returned from file $currentFileRef ",2,$currentSubroutine);
         $currentSkelLine = $DOFLocation{$currentFileRef} ;
@@ -8010,6 +8021,7 @@ sub processENDDOF {
         $skelDOFCount--;                                           # decrement )DOF count
         displayDebug("Processed )ENDDOF. DOF Count = $skelDOFCount",1,$currentSubroutine);
         verifyControlCounts();
+        $selectCond = '';       # turn off any enabled selection condition
       }
     }
   }
@@ -8307,7 +8319,7 @@ sub processSKELVERS {
   # -----------------------------------------------------------
   # Routine to process the SKELVERS statemnent. The format of the statement is:
   #
-  # )SKELVERS  $Id: processSkeleton.pm,v 1.130 2018/12/28 04:26:09 db2admin Exp db2admin $
+  # )SKELVERS  $Id: processSkeleton.pm,v 1.131 2019/01/02 20:46:23 db2admin Exp db2admin $
   #
   # Usage: processVERSION(<control card>)
   # Returns: sets the internal variable skelVers
