@@ -2,7 +2,7 @@
 # --------------------------------------------------------------------
 # runSkeleton.cgi
 #
-# $Id: runSkeleton.cgi,v 1.7 2018/08/08 06:25:05 db2admin Exp db2admin $
+# $Id: runSkeleton.cgi,v 1.9 2019/01/30 00:20:05 db2admin Exp db2admin $
 #
 # Description:
 # Script to process the skeleton passed as the first parameter
@@ -14,6 +14,12 @@
 #
 # ChangeLog:
 # $Log: runSkeleton.cgi,v $
+# Revision 1.9  2019/01/30 00:20:05  db2admin
+# change the parameter names referenced in commonFunctions.pm
+#
+# Revision 1.8  2018/11/13 00:01:17  db2admin
+# make sure the parameters are case insensitive
+#
 # Revision 1.7  2018/08/08 06:25:05  db2admin
 # add in parameter value checking for the dynamic parameters
 #
@@ -78,7 +84,7 @@ BEGIN {
 use lib "$scriptDir";
 
 use processSkeleton qw(processSkeleton skelVersion formatSQL $skelDebugLevel $skelCache $ctlCache testRoutine $testRoutines $outputMode $skelShowSQL $DBIModule $skelDebugModules);
-use commonFunctions qw(getOpt myDate trim $getOpt_optName $getOpt_optValue @myDate_ReturnDesc $myDate_debugLevel $getOpt_diagLevel $getOpt_web $getOpt_calledBy);
+use commonFunctions qw(getOpt myDate trim $getOpt_optName $getOpt_optValue @myDate_ReturnDesc $cF_debugLevel $getOpt_web $getOpt_calledBy);
 use calculator qw(calcVersion evaluateInfix $calcDebugLevel $calcDebugModules);
 
 # Variables to be used 
@@ -95,14 +101,14 @@ my $parmString;
 my $typeOfUse;
 my %DBIParameter;
 
-$getOpt_diagLevel = 0;
+#$cf_debugLevel = 0;
 $getOpt_calledBy = $0;
 my $QUERY_STRING = $ENV{'QUERY_STRING'};
 if ( $QUERY_STRING ne '' ) { $outputMode = 'HTTP' ; } # if the $QUERY_STRING variable has information it has probably come from the web 
 
 # Usage subroutine
 
-my $ID = '$Id: runSkeleton.cgi,v 1.7 2018/08/08 06:25:05 db2admin Exp db2admin $';
+my $ID = '$Id: runSkeleton.cgi,v 1.9 2019/01/30 00:20:05 db2admin Exp db2admin $';
 my @V = split(/ /,$ID);
 my $Version=$V[2];
 my $Changed="$V[3] $V[4]";
@@ -258,18 +264,18 @@ sub setSkelOptions {
   my $file = shift; 
 
   while (<$fileHandle>) {
-    if ( $_ =~ /End.*Control Information/ ) { last; } # indicates that no further control information in file so finish
+    if ( $_ =~ /End.*Control Information/i ) { last; } # indicates that no further control information in file so finish
     if ( uc(substr($_,0,3)) eq ")CM" ) { # it is a comment so may be a driver parameter
-      if ( $_ =~ /Input Parameter/ ) { # input parameter ....
-        my ($prm, $var, $valid) = ( $_ =~ /Input Parameter: \((.*)\)\s*(\S*)\s*(\S*)/ );
+      if ( $_ =~ /Input Parameter/i ) { # input parameter ....
+        my ($prm, $var, $valid) = ( $_ =~ /[Rr]: \((.*)\)\s*(\S*)\s*(\S*)/ );
         $parmString .= "$prm:";
         $skelParms{$prm} = $var;
         $skelParmsValid{$prm} = $valid;
         if ( $debugLevel > 0 ) { print STDERR "From File ($file): Parm $prm read in and assigned to $var\n"; }
       }
-      elsif ( $_ =~ /Input Flag/ ) { # input flag .... sets a boolean value
+      elsif ( $_ =~ /Input Flag/i ) { # input flag .... sets a boolean value
         # of the form: Input Flag: (v) debugLevel
-        my ($prm, $var, $valid) = ( $_ =~ /Input Flag: \((.*)\)\s*(\S*)\s*(\S*)/ );
+        my ($prm, $var, $valid) = ( $_ =~ /[gG]: \((.*)\)\s*(\S*)\s*(\S*)/ );
         if ( $var eq '' ) { print "Format of the parameter should be : 'Input Flag: (v) debugLevel'\n"; }
         else {
           $parmString .= "$prm";
@@ -279,8 +285,8 @@ sub setSkelOptions {
           if ( $debugLevel > 0 ) { print STDERR "From File ($file): Flag $prm read in and assigned to $var\n"; }
         }
       }
-      elsif ( $_ =~ /Type of use/ ) { # type of output
-        my ($tou) = ( $_ =~ /Type of use:\s*(\S*)/ );
+      elsif ( $_ =~ /Type of use/i ) { # type of output
+        my ($tou) = ( $_ =~ /[eE]:\s*(\S*)/ );
         if ( " WEB HTTP " =~ uc($tou) ) { # does it require web related output?
           $typeOfUse = 'HTTP';
           $outputMode = 'HTTP';
@@ -295,14 +301,14 @@ sub setSkelOptions {
         }
         if ( $debugLevel > 0 ) { print STDERR "From File ($file): Type of use is $typeOfUse\n"; }
       }
-      elsif ( $_ =~ /Requires DBI/ ) { # type of output
-        my ($DBIPrm) = ( $_ =~ /Requires DBI:\s*(\S*)/ );
+      elsif ( $_ =~ /Requires DBI/i ) { # type of output
+        my ($DBIPrm) = ( $_ =~ /[iI]:\s*(\S*)/ );
         if ( defined($DBIPrm) ) { # DBI required
           $DBIModule = $DBIPrm;
         }
         if ( $debugLevel > 0 ) { print STDERR "From File ($file): DBI Module required: $DBIModule\n";  }
       }
-      elsif ( $_ =~ /DBI Parameter/ ) { # type of output
+      elsif ( $_ =~ /DBI Parameter/i ) { # type of output
         my ($prm, $var) = ( $_ =~ /DBI Parameter : \((.*)\)\s*(\S*)/ );
         $DBIParameter{$prm} = $var;
         if ( $debugLevel > 0 ) { print STDERR "From File ($file): DBI Parm $var read in and assigned to $prm\n"; }
