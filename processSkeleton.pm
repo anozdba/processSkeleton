@@ -2,7 +2,7 @@
 # --------------------------------------------------------------------
 # processSkeleton.pm
 #
-# $Id: processSkeleton.pm,v 1.131 2019/01/02 20:46:23 db2admin Exp db2admin $
+# $Id: processSkeleton.pm,v 1.135 2019/01/25 01:36:16 db2admin Exp db2admin $
 #
 # Description:
 # Script to process a skeleton
@@ -31,6 +31,23 @@
 # ChangeLog:
 #
 # $Log: processSkeleton.pm,v $
+# Revision 1.135  2019/01/25 01:36:16  db2admin
+# adjust parametere def for commonFunctions.pm
+#
+# Revision 1.134  2019/01/22 23:58:07  db2admin
+# Modify header capitalisation to also capitalise characters after an opening bracket
+# Chnage to default to not alter headers
+#
+# Revision 1.133  2019/01/22 23:02:24  db2admin
+# 1. Add in DISPLAYDIFF function
+# 2. Add in debugging literal to evaluateInfix calls
+# 3. )FTAB and )FVTAB now have automated header formatting when requested
+# 4. ERROR messages may now be optionally sent to STDOUT
+# 5. Errors thrown in calculator.pm will reflect the same target (STDOUT or STDERR) as processSkeleton.pm
+#
+# Revision 1.132  2019/01/18 04:16:57  db2admin
+# correct issue with numbering of IDs within tables
+#
 # Revision 1.131  2019/01/02 20:46:23  db2admin
 # 1. Ensure that no processing is done in DOF or FDOF after you reach end of file
 # 2. Clear select  condition after each )DOF and )ENDDOF [selectCond is a one use only variable]
@@ -536,15 +553,15 @@ use strict;
 use warnings;
 use Data::Dumper qw(Dumper);
 use User::pwent; # for getpwuid and getgrnam
-use commonFunctions qw(trim ltrim rtrim commonVersion getOpt myDate $getOpt_web $getOpt_optName $getOpt_min_match $getOpt_optValue getOpt_form @myDate_ReturnDesc $myDate_debugLevel $getOpt_diagLevel $getOpt_calledBy $parmSeparators processDirectory $maxDepth $fileCnt $dirCnt localDateTime $datecalc_debugLevel displayMinutes timeDiff timeAdd timeAdj convertToTimestamp getCurrentTimestamp);
-use calculator qw(calcVersion evaluateInfix $calcDebugLevel $calcDebugModules);
+use commonFunctions qw(trim ltrim rtrim commonVersion getOpt myDate $getOpt_web $getOpt_optName $getOpt_min_match $getOpt_optValue getOpt_form @myDate_ReturnDesc $cF_debugLevel $getOpt_calledBy $parmSeparators processDirectory $maxDepth $fileCnt $dirCnt localDateTime displayMinutes timeDiff timeAdd timeAdj convertToTimestamp getCurrentTimestamp);
+use calculator qw(calcVersion evaluateInfix $calcDebugLevel $calcDebugModules $calc_errorToSTDOUT);
 use Exporter;
 # use Data::UUID;           # only useful if package installed
 my $ug;
 # my $ug    = Data::UUID->new;
 
 our @ISA = 'Exporter';
-our @EXPORT_OK = qw(processSkeleton skelVersion formatSQL $skelDebugLevel $skelCache $ctlCache $execCtlCache testRoutine $testRoutines $outputMode $skelShowSQL $DBIModule $skelDebugModules $skelDelimiter $skelVerboseSQLErrors $DOCMD_allowedStatements $skelMaxOutput $skelMaxTableOut $skelMaxRows $indexCaseInsensitive);
+our @EXPORT_OK = qw(processSkeleton skelVersion formatSQL $skelDebugLevel $skelCache $ctlCache $execCtlCache testRoutine $testRoutines $outputMode $skelShowSQL $DBIModule $skelDebugModules $skelDelimiter $skelVerboseSQLErrors $DOCMD_allowedStatements $skelMaxOutput $skelMaxTableOut $skelMaxRows $indexCaseInsensitive $pskl_errorToSTDOUT);
 
 # published variables
 our $skelDelimiter = ',';   # delimiter to be used when generating dump file using )DMP
@@ -568,6 +585,7 @@ our $outputMode = 'STDOUT'; # variable defining the target environment for the g
 our $DBIModule = '';        # DBI module to use for database connectivity
 our $DOCMD_allowedStatements = ' INSERT UPDATE DELETE '; # default allowed statements for )DOCMD
 our $indexCaseInsensitive = 1;  # default to case insensitive indexes
+our $pskl_errorToSTDOUT = 0;     # indicates which stream errors are to go to
 
 # Bring across any environment variables that may exist
 
@@ -676,7 +694,7 @@ my %cellStyle = ();                       # matches a cell style to a cell (this
 my %rowStyle = ();                        # matches a cell style to a cell
 my $currentRowStyle = '';                 # row style defined for the current row
 my $currentCellStyle = '';                # row style defined for the current cell
-my $convertHeaders = 1;                   # flag indicating if FDOF headers should be adjusted
+my $convertHeaders = 0;                   # flag indicating if FDOF/FTAB/FVTAB headers should be adjusted
 my $selectCond = '';                      # selection condition to be applied to loops 
 my $styleCount = 0;                       # incrementing count of style cards processed
 
@@ -850,7 +868,7 @@ sub skelVersion {
   # -----------------------------------------------------------
 
   my $currentSubroutine = 'skelVersion'; 
-  my $ID = '$Id: processSkeleton.pm,v 1.131 2019/01/02 20:46:23 db2admin Exp db2admin $';
+  my $ID = '$Id: processSkeleton.pm,v 1.135 2019/01/25 01:36:16 db2admin Exp db2admin $';
   my @V = split(/ /,$ID);
   my $nameStr=$V[1];
   my @N = split(",",$nameStr);
@@ -1320,10 +1338,20 @@ sub displayError {
   if ( ! defined($sub) ) { $sub = "Unknown Subroutine" } # if nothing passed then default
 
   if ( ! defined( $lit ) ) { # Nothing to display so just display the date and time
-    print STDERR "$sub - $tDate $tTime - $currentActiveSkel($tmpLine) - ERROR\n";
+    if ( $pskl_errorToSTDOUT ) {
+      print "$sub - $tDate $tTime - $currentActiveSkel($tmpLine) - ERROR\n";
+    }
+    else {
+      print STDERR "$sub - $tDate $tTime - $currentActiveSkel($tmpLine) - ERROR\n";
+    }
   }
   else {
-    print STDERR "$sub - $tDate $tTime - $currentActiveSkel($tmpLine) : ERROR : $lit\n";
+    if ( $pskl_errorToSTDOUT ) {
+      print "$sub - $tDate $tTime - $currentActiveSkel($tmpLine) : ERROR : $lit\n";
+    }
+    else {
+      print STDERR "$sub - $tDate $tTime - $currentActiveSkel($tmpLine) : ERROR : $lit\n";
+    }
     setVariable('lastError',$lit);
     $statementError = $lit;
   }
@@ -2598,7 +2626,7 @@ sub evaluateCondition {
   my $substitutedStr = trim($evalStr);
   $calcDebugLevel = $skelDebugLevel;
   $calcDebugModules = $skelDebugModules;
-  my $answer = evaluateInfix($substitutedStr);
+  my $answer = evaluateInfix($substitutedStr,"$currentActiveSkel($currentSkelLine)");
   
   displayDebug("The evaluation of $evalStr ($substitutedStr) is $answer",2,$currentSubroutine);
   
@@ -3189,7 +3217,8 @@ sub headerise {
   #     1. Convert all _ to spaces
   #     2. Capitalise the first letter of every word
   #     3. Capitalise characters after periods
-  #     4. set all other letters to lower case
+  #     4. Capitalise characters after opening brackets
+  #     5. set all other letters to lower case
   #
   # Usage: headerise(<header>)
   # Returns: a string in header format
@@ -3198,16 +3227,20 @@ sub headerise {
   my $currentSubroutine = 'headerise';
   my $header = shift;                                            # establish the card being processed
   
+  if ( ! defined($header) ) { return ''; }  # shouldn't really happen as always shouldhave something
+  
   $header =~ s/_/ /g;       # convert '_' to spaces
   $header = lc($header);    # convert all chars to lower case
   my $cchar = '';
-  my $lchar = '';
+  my $lchar = ' ';
   
   for ( my $i = 0; $i <= length($header); $i++ ) { # loop through all of the characters 
     $cchar  = substr($header,$i,1);
     if ( $i == 0 ) { substr($header,$i,1) = uc($cchar); } # make the first char upper case
     else {
-      if ( ' .' =~ $lchar ) { substr($header,$i,1) = uc($cchar); } # first character so make it lower case
+      if ( ($lchar eq ' ') || 
+           ($lchar eq '(') || 
+           ($lchar eq '.') ) { substr($header,$i,1) = uc($cchar); } # first character so make it upper case
     }
     $lchar = $cchar;    # save it
   }  
@@ -5276,6 +5309,7 @@ sub processHeading {
 
   # is it HTML or TEXT?
   if ( $outputMode eq "HTTP" ) {  # output it as a html table
+    $FTABNumber++; 
     $tStr = "<table border=\"1\" id=\"FTAB$FTABNumber\"><tr>\n";
     # loop through the returned columns and generate the headers
     # Calculate the longest vertical header (note %vertHeaders identifies which are vertical)
@@ -5288,17 +5322,22 @@ sub processHeading {
       }
     }
     # put out the header lines .... loop through then and break vertical headers
-    for ( my $i=0; $i<$num_of_fields; $i++ ) { 
+    for ( my $i=0; $i<$num_of_fields; $i++ ) {
+      my $headerName = $skelCursor{'FTAB'}->{NAME}->[$i];
+      if ( $convertHeaders ) {
+        $headerName = headerise($headerName);
+      }
+    
       if ( defined($vertHeader{$i}) ) { # this header is vertical  
         # insert a break between every chracter
-        $tmpHeader = $skelCursor{'FTAB'}->{NAME}->[$i];
+        $tmpHeader = $headerName;
         $tmpHeader = substr(' ' x $maxHeaderHeight . $tmpHeader, -$maxHeaderHeight, $maxHeaderHeight);
         $tmpHeader =~ s/(.)/$1<BR>/g;
         $tmpHeader =~ s/<BR>$//g;
         $tStr .= "<th>$tmpHeader</th>";
       }
       else { # horizontal header
-        $tStr .= '<th>' . $skelCursor{'FTAB'}->{NAME}->[$i] . '</th>';
+        $tStr .= '<th>' . $headerName . '</th>';
       }
     }
     $tStr .= "</tr>\n";
@@ -5320,16 +5359,20 @@ sub processHeading {
     # put out the header lines .... loop through 
     for ( my $j = 0 ; $j < $maxHeaderHeight; $j++ ) { # loop the number of header lines there are
       for ( my $i=0; $i<$num_of_fields; $i++ ) { 
+        my $headerName = $skelCursor{'FTAB'}->{NAME}->[$i];
+        if ( $convertHeaders ) {
+          $headerName = headerise($headerName);
+        }
         if ( defined($vertHeader{$i}) ) { # this header is vertical  
           # print off the character at this line
-          $offset = $maxHeaderHeight - length($skelCursor{'FTAB'}->{NAME}->[$i]);
+          $offset = $maxHeaderHeight - length($headerName);
           if ( $offset >= $i ) { # characters to print
-            $tStr .= "!". substr($skelCursor{'FTAB'}->{NAME}->[$i],$i - $offset,1);
+            $tStr .= "!". substr($headerName,$i - $offset,1);
           }
         }
         else { # horizontal header
           if ( $j == $maxHeaderHeight - 1 ) { # last line
-            $tStr .= "!" . $skelCursor{'FTAB'}->{NAME}->[$i]
+            $tStr .= "!" . $headerName;
           }
         }
       }
@@ -5983,11 +6026,15 @@ sub processFVTAB {
                 $skelTabValue = "";
                 $skelTabValue = getTabValue($fieldType, ${$skelCursorRow{'FVTAB'}}[$i], 'FVTAB',  $i);   # pass field type and the field across
   
+                my $headerName = $skelCursor{'FVTAB'}->{NAME}->[$i];
+                if ( $convertHeaders ) {
+                  $headerName = headerise($headerName);
+                }
                 if ( $outputMode eq "HTTP" ) {                          # output it as a html table cell
-                    outputLine("<tr><td>" . $skelCursor{'FVTAB'}->{NAME}->[$i] . "</td><td>" . $skelTabValue . "</td></tr>");
+                    outputLine("<tr><td>" . $headerName . "</td><td>" . $skelTabValue . "</td></tr>");
                 }
                 else { # character field ... just normal left alignment
-                  outputLine("!" . $skelCursor{'FVTAB'}->{NAME}->[$i] . " !" . $skelTabValue);
+                  outputLine("!" . $headerName . " !" . $skelTabValue);
                 }
               } # end of for loop processing columns
               
@@ -7356,7 +7403,7 @@ sub processSET {
           # NOTE: check for special values does not need to be checked here as special variables dont contain periods
           my $tempScope = $currentScope;      # save the current scope
           $currentScope = lc($scope);         # temporarily set the scope (scope is case insensitive)
-          $varValue = evaluateInfix(substituteVariables(trim($varValue)));
+          $varValue = evaluateInfix(substituteVariables(trim($varValue)),"$currentActiveSkel($currentSkelLine)");
           displayDebug("Result is = $varValue",1,$currentSubroutine);
           setVariable($tmpName, $varValue);
           $currentScope = $tempScope;         # return the scope back
@@ -7369,7 +7416,7 @@ sub processSET {
       
     }
 
-    $varValue = evaluateInfix(substituteVariables(trim($varValue)));
+    $varValue = evaluateInfix(substituteVariables(trim($varValue)),"$currentActiveSkel($currentSkelLine)");
     displayDebug("Result is = $varValue",1,$currentSubroutine);
     if ( ! checkForSpecialVariables($varName, $varValue) ) { # will return 0 if not special
       setVariable($varName,$varValue);    # set the variable
@@ -8135,10 +8182,10 @@ sub processIMBED {
   $calcDebugModules = $skelDebugModules;
 
   if ( $currentLinePosition <= length($card) ) { # there looks to be a 2nd parameter
-    $newSkel = evaluateInfix(trim(substr($card,$currentLinePosition)));       # set the debug level to the evaluated string provided on the )TRACE card
+    $newSkel = evaluateInfix(trim(substr($card,$currentLinePosition)),"$currentActiveSkel($currentSkelLine)");       # set the debug level to the evaluated string provided on the )TRACE card
   }    
   if ( $newSkel eq '' ) { # no variable scope was supplied (we assume)
-    $newSkel = evaluateInfix(trim(trim(substr($card,7))));
+    $newSkel = evaluateInfix(trim(trim(substr($card,7))),"$currentActiveSkel($currentSkelLine)");
     $scope = $currentScope; # default the scope to the current scope
   }
   if ( trim($newSkel) eq '' ) { return; }                                   # if the skeleton evaluates to blank then just ignore the statement
@@ -8160,7 +8207,7 @@ sub processTRACE {
   my $card = shift;                                                         # establish the card being processed
   
   my $depth = push(@traceLevelStack,$skelDebugLevel);                       # save off the current level
-  $skelDebugLevel = evaluateInfix(trim(substr($card,7)));                   # set the debug level to the evaluated string provided on the )TRACE card
+  $skelDebugLevel = evaluateInfix(trim(substr($card,7)),"$currentActiveSkel($currentSkelLine)");                   # set the debug level to the evaluated string provided on the )TRACE card
   setVariable('traceLevel',$skelDebugLevel);                                # update the internal variable
   displayDebug("Trace level set to $skelDebugLevel",0,$currentSubroutine);
 
@@ -8319,7 +8366,7 @@ sub processSKELVERS {
   # -----------------------------------------------------------
   # Routine to process the SKELVERS statemnent. The format of the statement is:
   #
-  # )SKELVERS  $Id: processSkeleton.pm,v 1.131 2019/01/02 20:46:23 db2admin Exp db2admin $
+  # )SKELVERS  $Id: processSkeleton.pm,v 1.135 2019/01/25 01:36:16 db2admin Exp db2admin $
   #
   # Usage: processVERSION(<control card>)
   # Returns: sets the internal variable skelVers
@@ -8866,6 +8913,7 @@ sub processFunction {
   #     UPPER            - Returns the string transformed to all upper case
   #
   #     TIMEDIFF         - difference in minutes between 2 dates
+  #     DISPLAYDIFF      - Difference between 2 dates converted to a human readable form
   #     DISPLAYMIN       - Takes mins and returns a display variable of days/hrs/mins
   #     TIMEADJ          - varies a tyimestamp by a number of minutes
   #     REFORMATTS       - Converts 'Sep 17, 2017 6:00:07 PM' to standard timestamp format
@@ -9324,6 +9372,26 @@ sub processFunction {
     return timeDiff($time1, $time2);   # return the time difference
     
   }  # end of TIMEDIFF function
+  elsif ( uc($function) eq "DISPLAYDIFF" ) { # DISPLAYDIFF function
+    my $time1 = getToken($card);                         # timestamp 1
+    my $time2 = getToken($card);                         # timestamp 2
+
+    # DISPLAYDIFF MUST have at least 1 parm
+
+    if ( $time1 eq "" ) { # no parameters have been displayed
+      displayError("DISPLAYDIFF function format is:\n)FUNC DISPLAYDIFF xxx = <TIMESTAMP string> [<TIMESTAMP string>]\nNote: It MUST have at least 1 parameter - Function will return 0",$currentSubroutine);
+      return '0';
+    }
+    
+    if ( $time2 eq '' ) { # second parameter not set - default it to current timestamp
+      $time2 = getCurrentTimestamp();
+    }
+
+    displayDebug("TS1=$time1, TS2=$time2",2,$currentSubroutine);
+
+    return displayMinutes(timeDiff($time1, $time2));   # return the time difference as a minutes string
+    
+  }  # end of DISPLAYDIFF function
   elsif ( uc($function) eq "TIMEADJ" ) { # TIMEADJ function
     my $time1 = getToken($card);                         # timestamp 1
     my $mins = getToken($card);                          # adjustment minutes
@@ -10254,6 +10322,9 @@ sub processSkeleton {
   $skelSELCount = 0;                     # initialise the )SEL/)ENDSEL balancing count
   @controlStack = ();                    # initialise the stack controlling )SEL and )DOT interactions
   
+  # align the error streams 
+  $calc_errorToSTDOUT = $pskl_errorToSTDOUT; 
+  
   my $currentSubroutine = 'processSkeleton'; 
 
   my $skeleton = shift;     # skeleton to process
@@ -10342,4 +10413,3 @@ sub processSkeleton {
 } # end of processSkeleton
 
 1;
-
