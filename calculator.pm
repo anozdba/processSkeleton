@@ -2,7 +2,7 @@
 # --------------------------------------------------------------------
 # calculator.pm
 #
-# $Id: calculator.pm,v 1.17 2019/02/01 02:41:41 db2admin Exp db2admin $
+# $Id: calculator.pm,v 1.18 2019/02/02 05:02:53 db2admin Exp db2admin $
 #
 # Description:
 # Package to evaluate a infix calculation string
@@ -17,6 +17,10 @@
 #
 # ChangeLog:
 # $Log: calculator.pm,v $
+# Revision 1.18  2019/02/02 05:02:53  db2admin
+# 1. Add in timestamp/date subtraction
+# 2. extend calTestRoutine to include tests for timestamp/date subtraction
+#
 # Revision 1.17  2019/02/01 02:41:41  db2admin
 # 1. change all currentSubroutine to currentRoutine
 # 2. add in performDateAddition fro doing date addition
@@ -310,7 +314,7 @@ sub calcVersion {
   # --------------------------------------------------------------------"
 
   my $currentRoutine = 'calcVersion';
-  my $ID = '$Id: calculator.pm,v 1.17 2019/02/01 02:41:41 db2admin Exp db2admin $';
+  my $ID = '$Id: calculator.pm,v 1.18 2019/02/02 05:02:53 db2admin Exp db2admin $';
 
   my @V = split(/ /,$ID);
   my $nameStr=$V[1];
@@ -952,7 +956,7 @@ sub performDateSubtraction {
     return "$year-$month-$day"; # return the date
   }
   
-} # end of performTimestampSubtraction
+} # end of performDateSubtraction
 
 sub performDateAddition {
   # -----------------------------------------------------------
