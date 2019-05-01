@@ -2,7 +2,7 @@
 # --------------------------------------------------------------------
 # calculator.pm
 #
-# $Id: calculator.pm,v 1.18 2019/02/02 05:02:53 db2admin Exp db2admin $
+# $Id: calculator.pm,v 1.21 2019/02/13 05:00:07 db2admin Exp db2admin $
 #
 # Description:
 # Package to evaluate a infix calculation string
@@ -17,9 +17,23 @@
 #
 # ChangeLog:
 # $Log: calculator.pm,v $
+# Revision 1.21  2019/02/13 05:00:07  db2admin
+# 1. Timestamp subtraction now allows duration, time and timestamp subtraction
+# 2. Added in extra tests in the calcTestRoutine to test new functionality
+#
+# Revision 1.20  2019/02/07 04:17:33  db2admin
+# remove timeAdd from the use list as the module is no longer provided
+#
+# Revision 1.19  2019/02/05 22:46:56  db2admin
+# 1. move performDateAddition,performDateSubtraction,performTimestampAddition and performTimestampSubtraction to commonFunctions.pm
+# 2. correct bug in subtraction for non-date/timestamps
+# 3. remove myDate and myTime and replace with getCurrentTimestamp
+# 4. remove isNumeric and replace with the commonFunctions.pm version
+# 5. remove isTimestamp as it is not used
+#
 # Revision 1.18  2019/02/02 05:02:53  db2admin
 # 1. Add in timestamp/date subtraction
-# 2. extend calTestRoutine to include tests for timestamp/date subtraction
+# 2. extend calTestRoutine to include tests for timestamp/date subtractio
 #
 # Revision 1.17  2019/02/01 02:41:41  db2admin
 # 1. change all currentSubroutine to currentRoutine
@@ -93,7 +107,7 @@ package calculator;
 
 use strict;
 
-use commonFunctions qw(trim ltrim rtrim commonVersion getOpt isValidDate isValidTimestamp myDate $getOpt_web $getOpt_optName $getOpt_min_match $getOpt_optValue getOpt_form @myDate_ReturnDesc $cF_debugLevel $getOpt_calledBy $parmSeparators processDirectory $maxDepth $fileCnt $dirCnt localDateTime displayMinutes timeDiff timeAdd timeAdj convertToTimestamp getCurrentTimestamp isValidDate processDuration);
+use commonFunctions qw(trim ltrim rtrim commonVersion getOpt isNumeric isValidDate isValidTimestamp isValidTimestampFormat myDate $getOpt_web $getOpt_optName $getOpt_min_match $getOpt_optValue getOpt_form @myDate_ReturnDesc $cF_debugLevel $getOpt_calledBy $parmSeparators processDirectory $maxDepth $fileCnt $dirCnt localDateTime displayMinutes timeDiff  timeAdj convertToTimestamp getCurrentTimestamp isValidDate processDuration performDateAddition performDateSubtraction performTimestampAddition performTimestampSubtraction isValidTime performTimeAddition performTimeSubtraction convertTimestampDuration);
 
 # export parameters ....
 require Exporter;
@@ -210,6 +224,10 @@ sub calcTestRoutine {
   }
 
   if ( oct($calcTestRoutines) & oct('0b000000000100000') ) { # testing date/time arithmertic
+
+    print "\n***** Testing Date/Time arithmetic tests ....\n";
+    print "***** Simple timestamp/durations arithmetic .... \n\n";
+
     $test = "'2018-12-01 23:49:01' + '22 minutes'";
     $expectedRes = "2018-12-02 00:11:01";
     print "Testing : \"$test\" (answer should be '$expectedRes')\n";
@@ -224,15 +242,15 @@ sub calcTestRoutine {
     if ( $result ne $expectedRes ) { print "FAIL - returned $result when the answer should have been '$expectedRes')\n"; }
     else { print "OK   - returned $result\n"; }
 
-    $test = "'2016-02-28' + '4 days 1 year'";
-    $expectedRes = "2017-03-03";
-    print "Testing : \"$test\" (answer should be '$expectedRes')\n";
+    $test = "'2018-12-01 00:19:01' + '-22 minutes'";
+    $expectedRes = "2018-12-01 00:41:01";
+    print "Testing : \"$test\" ( Testing the ignoring of negative values in duration - answer should be '$expectedRes')\n";
     my $result = evaluateInfix( $test );
     if ( $result ne $expectedRes ) { print "FAIL - returned $result when the answer should have been '$expectedRes')\n"; }
     else { print "OK   - returned $result\n"; }
 
-    $test = "'2016-02-28' + '4 days 1 year +6 minute'";
-    $expectedRes = "2017-03-03 00:06:00";
+    $test = "'2016-03-01 00:19:01' - '22 minutes 4 days 1 year'";
+    $expectedRes = "2015-02-25 23:57:01";
     print "Testing : \"$test\" (answer should be '$expectedRes')\n";
     my $result = evaluateInfix( $test );
     if ( $result ne $expectedRes ) { print "FAIL - returned $result when the answer should have been '$expectedRes')\n"; }
@@ -245,8 +263,17 @@ sub calcTestRoutine {
     if ( $result ne $expectedRes ) { print "FAIL - returned $result when the answer should have been '$expectedRes')\n"; }
     else { print "OK   - returned $result\n"; }
 
-    $test = "'2016-03-01 00:19:01' - '22 minutes 4 days 1 year'";
-    $expectedRes = "2015-02-25 23:57:01";
+    print "\n***** Simple date/durations arithmetic .... \n\n";
+
+    $test = "'2016-02-28' + '4 days 1 year'";
+    $expectedRes = "2017-03-03";
+    print "Testing : \"$test\" (answer should be '$expectedRes')\n";
+    my $result = evaluateInfix( $test );
+    if ( $result ne $expectedRes ) { print "FAIL - returned $result when the answer should have been '$expectedRes')\n"; }
+    else { print "OK   - returned $result\n"; }
+
+    $test = "'2016-02-28' + '4 days 1 year +6 minute'";
+    $expectedRes = "2017-03-03 00:06:00";
     print "Testing : \"$test\" (answer should be '$expectedRes')\n";
     my $result = evaluateInfix( $test );
     if ( $result ne $expectedRes ) { print "FAIL - returned $result when the answer should have been '$expectedRes')\n"; }
@@ -266,44 +293,95 @@ sub calcTestRoutine {
     if ( $result ne $expectedRes ) { print "FAIL - returned $result when the answer should have been '$expectedRes')\n"; }
     else { print "OK   - returned $result\n"; }
 
+    print "\n***** Simple date/durations arithmetic .... \n\n";
+
+    $test = "'23:23:04' + '1 hour 58 seconds'";
+    $expectedRes = "0000-00-01 00:24:02";
+    print "Testing : \"$test\" (answer should be '$expectedRes')\n";
+    my $result = evaluateInfix( $test );
+    if ( $result ne $expectedRes ) { print "FAIL - returned $result when the answer should have been '$expectedRes')\n"; }
+    else { print "OK   - returned $result\n"; }
+
+    print "\n***** Timestamp subtraction .... \n\n";
+
+    $test = "'2016-03-01 00:19:01' - '2016-02-27 00:18:01'";
+    $expectedRes = "4321";
+    print "Testing : \"$test\" converted to minutes (answer should be '$expectedRes')\n";
+    my $result = convertTimestampDuration(evaluateInfix( $test ),'M');
+    if ( $result ne $expectedRes ) { print "FAIL - returned $result when the answer should have been '$expectedRes')\n"; }
+    else { print "OK   - returned $result\n"; }
+
+    $test = "'2016-03-01 00:19:01' - '2016-02-27 00:18:01'";
+    $expectedRes = "0000-00-03 00:01:00";
+    print "Testing : \"$test\" (answer should be '$expectedRes')\n";
+    my $result = evaluateInfix( $test );
+    if ( $result ne $expectedRes ) { print "FAIL - returned $result when the answer should have been '$expectedRes')\n"; }
+    else { print "OK   - returned $result\n"; }
+
+    $test = "'2016-03-01 00:19:01' - '0000-00-03 00:01:00'";
+    $expectedRes = "2016-02-27 00:18:01";
+    print "Testing : \"$test\" (answer should be '$expectedRes')\n";
+    my $result = evaluateInfix( $test );
+    if ( $result ne $expectedRes ) { print "FAIL - returned $result when the answer should have been '$expectedRes')\n"; }
+    else { print "OK   - returned $result\n"; }
+
+    $test = "'2016-03-01 00:19:01' - '00:22:05'";
+    $expectedRes = "2016-02-29 23:56:56";
+    print "Testing : \"$test\" (answer should be '$expectedRes')\n";
+    my $result = evaluateInfix( $test );
+    if ( $result ne $expectedRes ) { print "FAIL - returned $result when the answer should have been '$expectedRes')\n"; }
+    else { print "OK   - returned $result\n"; }
+
+    print "\n***** Time Arithmetic .... \n\n";
+
+    $test = "'09:23:04' - '10 hours 6 minute'";
+    $expectedRes = "0000-00-01 23:17:04";
+    print "Testing : \"$test\" (answer should be '$expectedRes')\n";
+    my $result = evaluateInfix( $test );
+    if ( $result ne $expectedRes ) { print "FAIL - returned $result when the answer should have been '$expectedRes')\n"; }
+    else { print "OK   - returned $result\n"; }
+
+    $test = "'09:23:04' - '10:25:06'";
+    $expectedRes = "0000-00-01 22:57:58";
+    print "Testing : \"$test\" (answer should be '$expectedRes')\n";
+    my $result = evaluateInfix( $test );
+    if ( $result ne $expectedRes ) { print "FAIL - returned $result when the answer should have been '$expectedRes')\n"; }
+    else { print "OK   - returned $result\n"; }
+
+    $test = "'23:23:04' + '01:39:57'";
+    $expectedRes = "0000-00-01 01:03:01";
+    print "Testing : \"$test\" (answer should be '$expectedRes')\n";
+    my $result = evaluateInfix( $test );
+    if ( $result ne $expectedRes ) { print "FAIL - returned $result when the answer should have been '$expectedRes')\n"; }
+    else { print "OK   - returned $result\n"; }
+
+    print "\n***** Date Subtraction .... \n\n";
+
+    $test = "'2019-09-18' - '2018-09-18'";
+    $expectedRes = "365";
+    print "Testing : \"$test\" (answer should be '$expectedRes')\n";
+    my $result = evaluateInfix( $test );
+    if ( $result ne $expectedRes ) { print "FAIL - returned $result when the answer should have been '$expectedRes')\n"; }
+    else { print "OK   - returned $result\n"; }
+
+    $test = "'2016-09-18' - '2015-09-18'";
+    $expectedRes = "366";
+    print "Testing : \"$test\" (answer should be '$expectedRes')\n";
+    my $result = evaluateInfix( $test );
+    if ( $result ne $expectedRes ) { print "FAIL - returned $result when the answer should have been '$expectedRes')\n"; }
+    else { print "OK   - returned $result\n"; }
+
+    $test = "'2016-09-18' - '2016-07-18'";
+    $expectedRes = "62";
+    print "Testing : \"$test\" (answer should be '$expectedRes')\n";
+    my $result = evaluateInfix( $test );
+    if ( $result ne $expectedRes ) { print "FAIL - returned $result when the answer should have been '$expectedRes')\n"; }
+    else { print "OK   - returned $result\n"; }
+
   }
 
  
 } # end of calcTestRoutine
-
-sub getDate {
-  # -----------------------------------------------------------
-  #  Routine to return a formatted Date in YYYY.MM.DD format
-  #
-  # Usage: getDate()
-  # Returns: YYYY.MM.DD
-  # -----------------------------------------------------------
-
-  my $currentRoutine = 'getDate';
-  my ($second, $minute, $hour, $dayOfMonth, $month, $yearOffset, $dayOfWeek, $dayOfYear, $daylightSavings) = localtime();
-  my $year = 1900 + $yearOffset;
-  $month = $month + 1;
-  $month = substr("0" . $month, length($month)-1,2);
-  my $day = substr("0" . $dayOfMonth, length($dayOfMonth)-1,2);
-  return "$year.$month.$day";
-} # end of getDate
-
-sub getTime {
-  # -----------------------------------------------------------
-  # Routine to return a formatted time in HH:MM:SS format
-  #
-  # Usage: getTime()
-  # Returns: HH:MM:SS
-  # -----------------------------------------------------------
-
-  my $currentRoutine = 'getTime';
-  #my $second, $minute, $hour, $dayOfMonth, $month, $yearOffset, $dayOfWeek, $dayOfYear, $daylightSavings, $year;
-  my ($second, $minute, $hour, $dayOfMonth, $month, $yearOffset, $dayOfWeek, $dayOfYear, $daylightSavings) = localtime();
-  $hour = substr("0" . $hour, length($hour)-1,2);
-  $minute = substr("0" . $minute, length($minute)-1,2);
-  $second = substr("0" . $second, length($second)-1,2);
-  return "$hour:$minute:$second"
-} # end of getTime
 
 sub calcVersion {
   # --------------------------------------------------------------------"
@@ -314,7 +392,7 @@ sub calcVersion {
   # --------------------------------------------------------------------"
 
   my $currentRoutine = 'calcVersion';
-  my $ID = '$Id: calculator.pm,v 1.18 2019/02/02 05:02:53 db2admin Exp db2admin $';
+  my $ID = '$Id: calculator.pm,v 1.21 2019/02/13 05:00:07 db2admin Exp db2admin $';
 
   my @V = split(/ /,$ID);
   my $nameStr=$V[1];
@@ -336,8 +414,7 @@ sub displayError {
 
   my $lit  = shift;
   my $sub = shift;
-  my $tDate = getDate();
-  my $tTime = getTime();
+  my $TS = getCurrentTimestamp();
   my $sourceDisplay = '';
   
   if ( $sourceLiteral ne '' ) { $sourceDisplay = "- [$sourceLiteral] "; }
@@ -346,22 +423,22 @@ sub displayError {
 
   if ( ! defined( $lit ) ) { # Nothing to display so just display the date and time
     if ( $calc_errorToSTDOUT ) {
-      print "$sub - $tDate $tTime $sourceDisplay- ERROR\n";
-      print "$sub - $tDate $tTime $sourceDisplay: ERROR : Statement being processed was: $infixString\n";
+      print "$sub - $TS - $sourceDisplay- ERROR\n";
+      print "$sub - $TS - $sourceDisplay: ERROR : Statement being processed was: $infixString\n";
     }
     else {
-      print STDERR "$sub - $tDate $tTime $sourceDisplay- ERROR\n";
-      print STDERR "$sub - $tDate $tTime $sourceDisplay: ERROR : Statement being processed was: $infixString\n";
+      print STDERR "$sub - $TS - $sourceDisplay- ERROR\n";
+      print STDERR "$sub - $TS - $sourceDisplay: ERROR : Statement being processed was: $infixString\n";
     }
   }
   else {
     if ( $calc_errorToSTDOUT ) {
-      print "$sub - $tDate $tTime $sourceDisplay: ERROR : $lit\n";
-      print "$sub - $tDate $tTime $sourceDisplay: ERROR : Statement being processed was: $infixString\n";
+      print "$sub - $TS - $sourceDisplay: ERROR : $lit\n";
+      print "$sub - $TS - $sourceDisplay: ERROR : Statement being processed was: $infixString\n";
     }
     else {
-      print STDERR "$sub - $tDate $tTime $sourceDisplay: ERROR : $lit\n";
-      print STDERR "$sub - $tDate $tTime $sourceDisplay: ERROR : Statement being processed was: $infixString\n";
+      print STDERR "$sub - $TS - $sourceDisplay: ERROR : $lit\n";
+      print STDERR "$sub - $TS - $sourceDisplay: ERROR : Statement being processed was: $infixString\n";
     }
   }
 } # end of displayError
@@ -397,26 +474,25 @@ sub displayDebug {
   # Display a passed message with timestamp if the skelDebugLevel has been set
 
   if ( $call_debugLevel <= $calcDebugLevel ) {
-    my $tDate = getDate();
-    my $tTime = getTime();
+    my $TS = getCurrentTimestamp();
 
     if ( $lit eq "") { # Nothing to display so just display the date and time
-      print "$sub - $tDate $tTime\n";
+      print "$sub - $TS\n";
     }
     elsif ( $lit eq "DUMPSTACK" ) {
       print "Dumping STACK ($#stack entries) \n";
-      for ( my $i = 0; $i <= $#stack; $i++ ) { print "$sub - $tDate $tTime : Stack $i : $stack[$i] [tot $#stack]\n"; }
+      for ( my $i = 0; $i <= $#stack; $i++ ) { print "$sub - $TS : Stack $i : $stack[$i] [tot $#stack]\n"; }
     }
     elsif ( $lit eq "DUMPOUTPUT" ) {
       print "Dumping OUTPUT STACK ( $#output entries) \n";
-      for ( my $i = 0; $i <= $#output; $i++ ) { print "$sub - $tDate $tTime : Output Stack $i : $output[$i] [tot $#output]\n"; }
+      for ( my $i = 0; $i <= $#output; $i++ ) { print "$sub - $TS : Output Stack $i : $output[$i] [tot $#output]\n"; }
     }
     elsif ( $lit eq "DUMPOPSTACK" ) {
       print "Dumping OPERAND STACK ( $#operandStack entries) \n";
-      for ( my $i = 0; $i <= $#operandStack; $i++ ) { print "$sub - $tDate $tTime : Operand Stack $i : $operandStack[$i] [tot $#operandStack]\n"; }
+      for ( my $i = 0; $i <= $#operandStack; $i++ ) { print "$sub - $TS : Operand Stack $i : $operandStack[$i] [tot $#operandStack]\n"; }
     }
     else {
-      print "$sub - $tDate $tTime : $lit\n";
+      print "$sub - $TS : $lit\n";
     }
   }
 } # end of displayDebug
@@ -526,33 +602,7 @@ sub getCalculateToken {
 
 } # end of getCalculateToken
 
-sub isNumeric {
-  # -----------------------------------------------------------
-  # Routine to check if a supplied parameter is a number or not
-  #
-  # Usage: isnumeric('123');
-  # Returns: 0 - not numeric , 1 numeric
-  # -----------------------------------------------------------
 
-  my $currentRoutine = 'isNumeric';
-
-  my $var = shift;
-  displayDebug("var is: $var",1,$currentRoutine);
-
-  if ($var =~ /^\d+\z/)         { return 1; } # only contains digits between the start and the end of the bufer
-  displayDebug("Not Only Digits",5,$currentRoutine);
-  if ($var =~ /^-?\d+\z/)       { return 1; } # may contain a leading minus sign
-  displayDebug("Doesn't have a leading minus followed by digits",5,$currentRoutine);
-  if ($var =~ /^[+-]?\d+\z/)    { return 1; } # may have a leading minus or plus
-  displayDebug("No leading minus or plus followed by digits",5,$currentRoutine);
-  if ($var =~ /^-?\d+\.?\d*\z/) { return 1; } # may have a leading minus , digits , decimal point and then digits
-  displayDebug("Not a negative decimal number",5,$currentRoutine);
-  if ($var =~ /^[+-]?(?:\d*\.\d)?\d*(?:[Ee][+-]?\d+)\z/) { return 1; }
-  displayDebug("Not scientific notation",5,$currentRoutine);
-
-  return 0;
-
-} # end of isNumeric
 
 sub isFunction {
   # -----------------------------------------------------------
@@ -719,297 +769,6 @@ sub evaluateFunction {
   }   
 } # end of evaluateFunction
 
-sub isTimestamp {
-  # -----------------------------------------------------------
-  # Routine to check if a string is a timestamp
-  #
-  # A timestamp MUST be of the format "YYYY*MM*DD*HH*mm*SS"
-  #
-  # Usage: if ( isTimestamp($timestring) ) { # do something }
-  # Returns: 1 if the string is a timestamp
-  # -----------------------------------------------------------
-
-  my $currentRoutine = 'isTimestamp';
-
-  my $checkString = shift;
-  
-  # string MUST be 19 chars long 
-  if ( length ( $checkString ) != 19 ) { return 0; } 
-  # break out the digits
-  my ($year,$month,$day,$hour,$min,$sec) = ($checkString =~ /(\d\d\d\d).(\d\d).(\d\d).(\d\d).(\d\d).(\d\d)/ ) ;
-  
-  # check that the split out worked (ie numbers where numbers should be)
-  if ( ! defined($year) ) { return 0; }  
-  
-  if ( isValidDate("$year-$month-$day") ) { # do checks on the time ....
-    if ( $hour > 23 ) { return 0; } # Hour must be 00 -> 23
-    if ( $min > 59 ) { return 0; }  # Minutes must be 00 -> 59
-    if ( $sec > 59 ) { return 0; }  # Seconds must be 00 -> 59
-  }
-  else {
-    return 0; # date is not valid
-  }
-  
-  # to get here everything must look ok
-  
-  return 1;
-
-} # end of isTimestamp
-
-sub performTimestampAddition {
-  # -----------------------------------------------------------
-  # Routine to add a duration to a timestamp
-  #
-  # Usage: $x = performTimestampAddition($TS1, $dur);
-  # Returns: a timestamp
-  # -----------------------------------------------------------
-
-  my $currentRoutine = 'performTimestampAddition';
-
-  my $TS = shift;
-  my $duration = shift;
-  
-  displayDebug( "TS=$TS, duration=$duration", 1, $currentRoutine);
-  
-  # isolate the components
-  my ($TS_year, $TS_month, $TS_day, $TS_hour, $TS_min, $TS_sec) = ( $TS =~ /(\d\d\d\d).(\d\d).(\d\d).(\d\d).(\d\d).(\d\d)/);
-  my ($Dur_year, $Dur_month, $Dur_day, $Dur_hour, $Dur_min, $Dur_sec) = ( $duration =~ /(\d\d\d\d).(\d\d).(\d*)[^\d](\d\d).(\d\d).(\d\d)/);
-  
-  # do the time addition
-  my $sec = $TS_sec + $Dur_sec;
-  if ( $sec > 59 ) { 
-    $Dur_min++;
-    $sec = $sec - 60;
-  }
-
-  my $min = $TS_min + $Dur_min;
-  if ( $min > 59 ) { 
-    $Dur_hour++;
-    $min = $min - 60;
-  }
-
-  my $hour = $TS_hour + $Dur_hour;
-  if ( $hour > 23 ) { 
-    $Dur_day++;
-    $hour = $hour - 24;
-  }
-  
-  # times have been added now to do the day ......
-
-  my @T = myDate("DATE\:$TS_year$TS_month$TS_day");   # number of days from base date to timestamp date
-  my $baseToTS = $T[5];
-  displayDebug( "number of days to TS : $baseToTS", 1, $currentRoutine);
-  my $numday = $Dur_day + $T[5];   # $numday now points to the date after addition of duration days
-  @T = myDate($numday);            # now have the date after days addition 
-  displayDebug( "Date $Dur_day days after $TS_year/$TS_month/$TS_day : $T[0]/$T[1]/$T[2]", 1, $currentRoutine);
-  my $day = $T[0];
-  my $month = $Dur_month + $T[1];         # add any extra months
-  if ( $month > 12 ) {             # adjust months as necessary
-    $month = $month - 12;
-    $Dur_year++;
-  }
-  my $year = $Dur_year + $T[2] ;          # add any years if necessary        
-  displayDebug( "Timestamp date after adding in year and month : $day/$month/$year", 1, $currentRoutine);
-  $year = sprintf("%04d",$year);
-  $month = sprintf("%02d",$month);
-  $day = sprintf("%02d",$day);
-  $hour = sprintf("%02d",$hour);
-  $min = sprintf("%02d",$min);
-  $sec = sprintf("%02d",$sec);
-  displayDebug( "Timestamp result is: '$year-$month-$day $hour:$min:$sec'", 1, $currentRoutine);
-  return "$year-$month-$day $hour:$min:$sec"; # return the timestamp
-  
-} # end of performTimestampAddition
-
-sub performTimestampSubtraction {
-  # -----------------------------------------------------------
-  # Routine to subtract a duration from a timestamp
-  #
-  # Usage: $x = performTimestampSubtraction($TS1, $dur);
-  # Returns: a timestamp
-  # -----------------------------------------------------------
-
-  my $currentRoutine = 'performTimestampSubtraction';
-
-  my $TS = shift;
-  my $duration = shift;
-  
-  displayDebug( "TS=$TS, duration=$duration", 1, $currentRoutine);
-  
-  # isolate the components
-  my ($TS_year, $TS_month, $TS_day, $TS_hour, $TS_min, $TS_sec) = ( $TS =~ /(\d\d\d\d).(\d\d).(\d\d).(\d\d).(\d\d).(\d\d)/);
-  my ($Dur_year, $Dur_month, $Dur_day, $Dur_hour, $Dur_min, $Dur_sec) = ( $duration =~ /(\d\d\d\d).(\d\d).(\d*)[^\d](\d\d).(\d\d).(\d\d)/);
-  
-  # do the time subtraction
-  my $sec = $TS_sec - $Dur_sec;
-  if ( $sec < 0 ) { 
-    $Dur_min++;       # increasing the number of minutes to subtract
-    $sec = $sec + 60;
-  }
-
-  my $min = $TS_min - $Dur_min;
-  if ( $min < 59 ) { 
-    $Dur_hour++;      # increasing the number of hours to subtract
-    $min = $min + 60;
-  }
-
-  my $hour = $TS_hour - $Dur_hour;
-  if ( $hour < 0 ) { 
-    $Dur_day++;      # increasing the number of days to subtract
-    $hour = $hour + 24;
-  }
-  
-  # times have been subtracted so now to do the day ......
-
-  my @T = myDate("DATE\:$TS_year$TS_month$TS_day");   # number of days from base date to timestamp date
-  my $baseToTS = $T[5];
-  displayDebug( "number of days to TS : $baseToTS", 1, $currentRoutine);
-  my $numday = $T[5] - $Dur_day;   # $numday now points to the date after substraction of duration days
-  @T = myDate($numday);            # now have the date after days addition 
-  displayDebug( "Date $Dur_day days before $TS_year/$TS_month/$TS_day : $T[0]/$T[1]/$T[2]", 1, $currentRoutine);
-  my $day = $T[0];
-  my $month = $T[1] - $Dur_month;  # subtract the months
-  if ( $month < 1 ) {              # adjust months as necessary
-    $month = $month + 12;
-    $Dur_year--;
-  }
-  my $year = $T[2] - $Dur_year ;   # subtract years if necessary        
-  displayDebug( "Timestamp date after subtracting year and month : $day/$month/$year", 1, $currentRoutine);
-  $year = sprintf("%04d",$year);
-  $month = sprintf("%02d",$month);
-  $day = sprintf("%02d",$day);
-  $hour = sprintf("%02d",$hour);
-  $min = sprintf("%02d",$min);
-  $sec = sprintf("%02d",$sec);
-  displayDebug( "Timestamp result is: '$year-$month-$day $hour:$min:$sec'", 1, $currentRoutine);
-  return "$year-$month-$day $hour:$min:$sec"; # return the timestamp
-  
-} # end of performTimestampSubtraction
-
-sub performDateSubtraction {
-  # -----------------------------------------------------------
-  # Routine to subtract a duration from a date
-  #
-  # Usage: $x = performDateSubtraction($TS1, $dur);
-  # Returns: a date (unless the duration contains HMS and then it returns a timestamp)
-  # -----------------------------------------------------------
-
-  my $currentRoutine = 'performDateSubtraction';
-
-  my $Date = shift;
-  my $duration = shift;
-  
-  displayDebug( "Date=$Date, duration=$duration", 1, $currentRoutine);
-  
-  # isolate the components
-  my ($DT_year, $DT_month, $DT_day) = ( $Date =~ /(\d\d\d\d).(\d\d).(\d\d)/);
-  my ($Dur_year, $Dur_month, $Dur_day, $Dur_hour, $Dur_min, $Dur_sec) = ( $duration =~ /(\d\d\d\d).(\d\d).(\d*)[^\d](\d\d).(\d\d).(\d\d)/);
-  
-  # do the time subtraction
-  my $sec = 0 - $Dur_sec;
-  if ( $sec < 0 ) { 
-    $Dur_min++;       # increasing the number of minutes to subtract
-    $sec = $sec + 60;
-  }
-
-  my $min = 0 - $Dur_min;
-  if ( $min < 0 ) { 
-    $Dur_hour++;      # increasing the number of hours to subtract
-    $min = $min + 60;
-  }
-
-  my $hour = 0 - $Dur_hour;
-  if ( $hour < 0 ) { 
-    $Dur_day++;      # increasing the number of days to subtract
-    $hour = $hour + 24;
-  }
-  
-  # times have been subtracted so now to do the day ......
-
-  my @T = myDate("DATE\:$DT_year$DT_month$DT_day");   # number of days from base date to timestamp date
-  my $baseToTS = $T[5];
-  displayDebug( "number of days to TS : $baseToTS", 1, $currentRoutine);
-  my $numday = $T[5] - $Dur_day;   # $numday now points to the date after substraction of duration days
-  @T = myDate($numday);            # now have the date after days addition 
-  displayDebug( "Date $Dur_day days before $DT_year/$DT_month/$DT_day : $T[0]/$T[1]/$T[2]", 1, $currentRoutine);
-  my $day = $T[0];
-  my $month = $T[1] - $Dur_month;  # subtract the months
-  if ( $month < 1 ) {              # adjust months as necessary
-    $month = $month + 12;
-    $Dur_year--;
-  }
-  my $year = $T[2] - $Dur_year ;   # subtract years if necessary        
-  displayDebug( "Timestamp date after subtracting year and month : $day/$month/$year", 1, $currentRoutine);
-  $year = sprintf("%04d",$year);
-  $month = sprintf("%02d",$month);
-  $day = sprintf("%02d",$day);
-  $hour = sprintf("%02d",$hour);
-  $min = sprintf("%02d",$min);
-  $sec = sprintf("%02d",$sec);
-  if ( $hour + $min + $sec > 0 ) { # then time was part of the duration
-                                               # convert the result to timestamp
-    displayDebug( "Timestamp result is: '$year-$month-$day $hour:$min:$sec'", 1, $currentRoutine);
-    return "$year-$month-$day $hour:$min:$sec"; # return the timestamp
-  }
-  else {   # date only to be returned
-    displayDebug( "Date result is: '$year-$month-$day'", 1, $currentRoutine);
-    return "$year-$month-$day"; # return the date
-  }
-  
-} # end of performDateSubtraction
-
-sub performDateAddition {
-  # -----------------------------------------------------------
-  # Routine to add a duration to a date
-  #
-  # Usage: $x = performDateAddition($TS1, $dur);
-  # Returns: a date
-  # -----------------------------------------------------------
-
-  my $currentRoutine = 'performDateAddition';
-
-  my $Date = shift;
-  my $duration = shift;
-
-  displayDebug( "Date=$Date, duration=$duration", 1, $currentRoutine);
-  
-  # isolate the components
-  my ($TS_year, $TS_month, $TS_day) = ( $Date =~ /(\d\d\d\d).(\d\d).(\d\d)/);
-  # The duration arrives as a timestamp representation. If hours/min/secs are set then the result will be converted to a timestamp
-  my ($Dur_year, $Dur_month, $Dur_day, $Dur_hour, $Dur_min, $Dur_sec) = ( $duration =~ /(\d\d\d\d).(\d\d).(\d*)[^\d](\d\d).(\d\d).(\d\d)/);
-  
-  # Process the date addition .....
-
-  my @T = myDate("DATE\:$TS_year$TS_month$TS_day");   # number of days from base date to timestamp date
-  my $baseToDate = $T[5];
-  displayDebug( "number of days to date : $baseToDate", 1, $currentRoutine);
-  my $numday = $Dur_day + $T[5];   # $numday now points to the date after addition of duration days
-  @T = myDate($numday);            # now have the date after days addition 
-  displayDebug( "Date $Dur_day days after $TS_year/$TS_month/$TS_day : $T[0]/$T[1]/$T[2]", 1, $currentRoutine);
-  my $day = $T[0];
-  my $month = $Dur_month + $T[1];         # add any extra months
-  if ( $month > 12 ) {             # adjust months as necessary
-    $month = $month - 12;
-    $Dur_year++;
-  }
-  my $year = $Dur_year + $T[2] ;          # add any years if necessary        
-  displayDebug( "Date after adding in year and month : $day/$month/$year", 1, $currentRoutine);
-  $year = sprintf("%04d",$year);
-  $month = sprintf("%02d",$month);
-  $day = sprintf("%02d",$day);
-  
-  if ( $Dur_hour + $Dur_min + $Dur_sec > 0 ) { # then time was part of the duration
-                                               # convert the result to timestamp
-    displayDebug( "Timestamp result is: '$year-$month-$day $Dur_hour:$Dur_min:$Dur_sec'", 1, $currentRoutine);
-    return "$year-$month-$day $Dur_hour:$Dur_min:$Dur_sec"; # return the timestamp
-  }
-  else {   # date only to be returned
-    displayDebug( "Date result is: '$year-$month-$day'", 1, $currentRoutine);
-    return "$year-$month-$day"; # return the date
-  }
-  
-} # end of performDateAddition
-
 sub evaluateBinaryOperator {
   # -----------------------------------------------------------
   # Routine to evaluate a binary operator
@@ -1026,9 +785,9 @@ sub evaluateBinaryOperator {
   my $isDuration = 0;  # flag indicating that the variable is a valid duration
   my $duration = 0;    # the duration of a supplied parameter
 
-  if ( $operator eq "+" ) {        # addition
+  if ( $operator eq "+" ) {        # addition 
     displayDebug( "Doing an addition. op1=$op1, op2=$op2", 1, $currentRoutine);
-    if ( isValidTimestamp($op1) ) { # timestamp addition 
+    if ( isValidTimestamp($op1) ) { # timestamp addition (perhaps)
       ($isDuration, $duration) = processDuration($op2,'T'); # check if the duration is valid and convert it to a timestamp format
       if ( $isDuration ) { # add the duration
         return performTimestampAddition($op1, $duration);
@@ -1038,13 +797,26 @@ sub evaluateBinaryOperator {
         return $op1 + $op2;
       }
     }
-    elsif ( isValidDate($op1) ) { # date addition
+    elsif ( isValidDate($op1) ) { # date addition (perhaps)
       ($isDuration, $duration) = processDuration($op2,'T'); # check if the duration is valid and convert it to a timestamp format
       if ( $isDuration ) { # add the duration
         return performDateAddition($op1, $duration);
       }
       else { # not a valid date addition
         displayError("Looks like date addition but you can only add duratons to dates",$currentRoutine);
+        return $op1 + $op2;
+      }
+    }
+    elsif ( isValidTime($op1) ) { # time addition (perhaps)
+      ($isDuration, $duration) = processDuration($op2,'T'); # check if the duration is valid and convert it to a timestamp format
+      if ( $isDuration ) { # add the duration
+        return performTimeAddition($op1, $duration);
+      }
+      elsif ( isValidTime($op2) ) { # adding a time to a time
+        return performTimeAddition($op1, "0000-00-00 $op2");
+      }
+      else { # not a valid time addition
+        displayError("Looks like time addition but you can only add duratons or times to times",$currentRoutine);
         return $op1 + $op2;
       }
     }
@@ -1056,26 +828,50 @@ sub evaluateBinaryOperator {
     displayDebug( "Doing a subtraction. op1=$op1, op2=$op2", 1, $currentRoutine);
     if ( isValidTimestamp($op1) ) { # timestamp addition 
       ($isDuration, $duration) = processDuration($op2,'T'); # check if the duration is valid and convert it to a timestamp format
-      if ( $isDuration ) { # add the duration
+      if ( $isDuration ) { # subtract the duration
         return performTimestampSubtraction($op1, $duration);
       }
-      else { # not a valid timestamp addition
-        displayError("Looks like timestamp subtraction but you can only subtract duratons from timestamps",$currentRoutine);
-        return $op1 + $op2;
+      elsif ( isValidTimestampFormat($op2) ) { # subtract the timestamp
+        # the timestamp may be a duration in a timestamp's format or a real timestamp
+        # a year less than 1000 indicates that it is a duration in timestamp's clothing
+        return performTimestampSubtraction($op1, $duration);
+      }
+      elsif ( isValidTime($op2) ) { # subtract the timestamp
+        return performTimestampSubtraction($op1, "0000-00-00 $duration");
+      }
+      else { # not a valid timestamp subtraction
+        displayError("Looks like timestamp subtraction but you can only subtract durations, times or timestamps from timestamps",$currentRoutine);
+        return $op1 - $op2;
       }
     }
     elsif ( isValidDate($op1) ) { # date subtraction
       ($isDuration, $duration) = processDuration($op2,'T'); # check if the duration is valid and convert it to a timestamp format
       if ( $isDuration ) { # subtract the duration
-        return performDateSubtraction($op1, $duration);
+        return performDateSubtraction($op1, $duration, 'T');
       }
-      else { # not a valid date addition
-        displayError("Looks like date subtraction but you can only subtract duratons to dates",$currentRoutine);
-        return $op1 + $op2;
+      elsif ( isValidDate($op2) ) { # subtract the date (which will return the number of days between the dates)
+        return performDateSubtraction($op1, "$op2 00:00:00", 'D');
+      }
+      else { # not a valid date subtraction
+        displayError("Looks like date subtraction but you can only subtract durations from dates",$currentRoutine);
+        return $op1 - $op2;
       }
     }
-    else { # just treat it as normal addition
-      return $op1 + $op2; 
+    elsif ( isValidTime($op1) ) { # time subtraction (perhaps)
+      ($isDuration, $duration) = processDuration($op2,'T'); # check if the duration is valid and convert it to a timestamp format
+      if ( $isDuration ) { # subtract the duration
+        return performTimeSubtraction($op1, $duration);
+      }
+      elsif ( isValidTime($op2) ) { # subtracting a time from a time
+        return performTimeSubtraction($op1, "0000-00-00 $op2");
+      }
+      else { # not a valid time subtraction
+        displayError("Looks like time subtraction but you can only subtract durations or times from times",$currentRoutine);
+        return $op1 - $op2;
+      }
+    }
+    else { # just treat it as normal subtraction
+      return $op1 - $op2; 
     }
   }    # subtraction
   elsif ( $operator eq "*" ) { return $op1 * $op2; }    # multiplication
