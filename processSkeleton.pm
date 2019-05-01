@@ -2,7 +2,7 @@
 # --------------------------------------------------------------------
 # processSkeleton.pm
 #
-# $Id: processSkeleton.pm,v 1.135 2019/01/25 01:36:16 db2admin Exp db2admin $
+# $Id: processSkeleton.pm,v 1.140 2019/05/01 02:00:21 db2admin Exp db2admin $
 #
 # Description:
 # Script to process a skeleton
@@ -31,6 +31,21 @@
 # ChangeLog:
 #
 # $Log: processSkeleton.pm,v $
+# Revision 1.140  2019/05/01 02:00:21  db2admin
+# ensure indentLevel is initialised in formatSQL
+#
+# Revision 1.139  2019/05/01 01:31:47  db2admin
+# add in a field type of -99 to represent CLOB data
+#
+# Revision 1.138  2019/05/01 01:11:51  db2admin
+# modify tab processing to allow different token terminators
+#
+# Revision 1.137  2019/04/30 23:16:29  db2admin
+# correct bug in the processing of right justified tabs
+#
+# Revision 1.136  2019/02/10 21:56:55  db2admin
+# remove timeAdd from imported modules list
+#
 # Revision 1.135  2019/01/25 01:36:16  db2admin
 # adjust parametere def for commonFunctions.pm
 #
@@ -553,7 +568,7 @@ use strict;
 use warnings;
 use Data::Dumper qw(Dumper);
 use User::pwent; # for getpwuid and getgrnam
-use commonFunctions qw(trim ltrim rtrim commonVersion getOpt myDate $getOpt_web $getOpt_optName $getOpt_min_match $getOpt_optValue getOpt_form @myDate_ReturnDesc $cF_debugLevel $getOpt_calledBy $parmSeparators processDirectory $maxDepth $fileCnt $dirCnt localDateTime displayMinutes timeDiff timeAdd timeAdj convertToTimestamp getCurrentTimestamp);
+use commonFunctions qw(trim ltrim rtrim commonVersion getOpt myDate $getOpt_web $getOpt_optName $getOpt_min_match $getOpt_optValue getOpt_form @myDate_ReturnDesc $cF_debugLevel $getOpt_calledBy $parmSeparators processDirectory $maxDepth $fileCnt $dirCnt localDateTime displayMinutes timeDiff  timeAdj convertToTimestamp getCurrentTimestamp);
 use calculator qw(calcVersion evaluateInfix $calcDebugLevel $calcDebugModules $calc_errorToSTDOUT);
 use Exporter;
 # use Data::UUID;           # only useful if package installed
@@ -613,6 +628,7 @@ my $currentLinePosition = 0 ;             # current scan position in the line be
 my $outputLineCount = 0 ;                 # count of the number of lines that have been output
 my $skelReturnString = '' ;               # string to hold the generated output
 my $skelTermChar = " ()!,.;'~=<>+\|\"-/\\\n"; # characters that will terminate a token within a skeleton
+my $tabTermChar = " ()!,;'~=<>+\|\"-/\\\n"; # characters that will terminate a token for a tab entry
 my $numericFieldTypes = ' 2 3 4 5 6 7 8 -5 -6 NUMERIC'; # field types that define numeric values
 my $machine = '';                         # server the script is running on
 my @traceLevelStack = ();                 # stack to manage trace levels
@@ -868,7 +884,7 @@ sub skelVersion {
   # -----------------------------------------------------------
 
   my $currentSubroutine = 'skelVersion'; 
-  my $ID = '$Id: processSkeleton.pm,v 1.135 2019/01/25 01:36:16 db2admin Exp db2admin $';
+  my $ID = '$Id: processSkeleton.pm,v 1.140 2019/05/01 02:00:21 db2admin Exp db2admin $';
   my @V = split(/ /,$ID);
   my $nameStr=$V[1];
   my @N = split(",",$nameStr);
@@ -1125,6 +1141,7 @@ sub formatSQL {
       $newLine = 1;
     }
     elsif ( $SQLToken eq ',' ) { # comma - CR and indent
+      if ( ! defined($indentLevel) ) { $indentLevel = 0; }
       displayDebug("indentLevel = $indentLevel",1,$currentSubroutine);
       $spaces = multiChar(" ",$indentLevel + 5);
       $formattedSQL .= "\n" . $spaces . $SQLToken ." ";
@@ -2334,6 +2351,7 @@ sub substituteVariables {
             # SQL_WCHAR           -8
             # SQL_WVARCHAR        -9
             # SQL_WLONGVARCHAR   -10
+            # SQL_CLOB           -99
             # -------------------------------------------------------------------------
 
             $skelFieldValue = '';           # initialise it to empty
@@ -2515,47 +2533,42 @@ sub putInTabs {
         for ( my $i=0; $i <= $#tabEntries; $i++ ) {                               # for each tab stop entry
           displayDebug("tabEntries[$i]=$tabEntries[$i],iPos=$iPos",2,$currentSubroutine);
           if ( $tabEntries[$i] >= $iPos ) {                                      # found first tab marker past the ! character 
-          displayDebug("Tab stop found is $tabEntries[$i], iPos: $iPos",2,$currentSubroutine);
-          if ( $iPos == 0 ) { # special case as it is the first character
-            $pad = space($tabEntries[$i] - $iPos);
+            displayDebug("Tab stop found is $tabEntries[$i], iPos: $iPos",2,$currentSubroutine);
+            if ( $iPos == 0 ) { # special case as it is the first character
+              $pad = space($tabEntries[$i] - $iPos);
+            }
+            else { 
+              $pad = space($tabEntries[$i] - $iPos);
+            }
+            last;                               
           }
-          else { 
-            $pad = space($tabEntries[$i] - $iPos);
-          }
-          last;                               
+        }   
+        # replace the tab
+        if ( $iPos == 0 ) { # special case as it is the first character - just pad the front and skip the 1st character
+          $convString = $pad . substr($convString, 1);
         }
-      }   
-      # replace the tab
-      if ( $iPos == 0 ) { # special case as it is the first character - just pad the front and skip the 1st character
-        $convString = $pad . substr($convString, 1);
+        else {
+          $convString = substr($convString, 0, $iPos) . $pad . substr($convString, $iPos + 1);
+        }  
+        # rescan for tab stops as the positions will have changed
+        $iPos = index($convString, $leftJustTab) ;
+        $jPos = index($convString, $rightJustTab) ;
+        displayDebug("$leftJustTab Pos: $iPos, $rightJustTab Pos: $jPos, Line: $convString",2,$currentSubroutine);
       }
-      else {
-        $convString = substr($convString, 0, $iPos) . $pad . substr($convString, $iPos + 1);
-      }  
-      # rescan for tab stops as the positions will have changed
-      $iPos = index($convString, $leftJustTab) ;
-      $jPos = index($convString, $rightJustTab) ;
-      displayDebug("$leftJustTab Pos: $iPos, $rightJustTab Pos: $jPos, Line: $convString",2,$currentSubroutine);
-    }
-    else { # $rightJustTab must be next to process (the $rightJustTab means that the next token will be right justified to the tab stop)
-      $pad = " ";
-      my $kPos = $jPos + 1;
-      # find the end of the token
-      while ( index($skelTermChar, substr($convString,$kPos,1)) == -1 ) { $kPos++; } 
+      else { # $rightJustTab must be next to process (the $rightJustTab means that the next token will be right justified to the tab stop)
+        $pad = " ";
+        my $kPos = $jPos + 1;
+        # find the end of the token
+        while ( index($tabTermChar, substr($convString,$kPos,1)) == -1 ) { $kPos++; } 
         $kPos--;   # adjust pos to the last char
-        # now we know how long the token is to right justify (kpos - jpos - 1) 
+        # now we know how long the token is to right justify (kpos - jpos) 
         # now find the tab stop that applies
         for ( my $i=0; $i <= $#tabEntries; $i++ ) {                    # loop through each tab stop  
           if ( $tabEntries[$i] >= $jPos ) {                          # found first tab marker past the ~ character 
-            if ( $jPos == 0 ) {                                      # special case as it is the first character
-              $pad = space($tabEntries[$i] - $kPos);
-            }
-            else {  
-              $pad = space($tabEntries[$i] - $kPos + 1);
-            }  
+            $pad = space($tabEntries[$i] - $kPos + 1);
             last;                                                    # finish the loop
-          }
-        }
+          } 
+        } 
         # now put the padding in 
         if ( $jPos == 0 ) {                                          # special case as it is the first character
           $convString = $pad . substr($convString, $jPos + 1);
@@ -4128,7 +4141,7 @@ sub getTabValue {
   # -----------------------------------------------------------
   # Routine to get and process cursor values
   #
-  # Usage: getTabeValue(<fieldType>, <cursor value>, <cursor ref>, <column index>)
+  # Usage: getTabValue(<fieldType>, <cursor value>, <cursor ref>, <column index>)
   # Returns: a formatted cursor value
   # -----------------------------------------------------------  
   
@@ -4141,7 +4154,7 @@ sub getTabValue {
   my $formattedValue = "";      # string to be returned
   
   if ( isNumeric($fieldType) ) { # the fieldType is numeric - DB2 returns a numeric field type
-    if ( ($fieldType == -1) || ($fieldType == -4) || ($fieldType == -10) ) { # long field
+    if ( ($fieldType == -1) || ($fieldType == -4) || ($fieldType == -10) || ($fieldType == -99) ) { # long field
       if ( defined($fieldValue) ) {       # is the field defined? (if it isn't then perhaps it needs to be retrieved
         $formattedValue = $fieldValue;      # just move the data across
       }
@@ -8366,7 +8379,7 @@ sub processSKELVERS {
   # -----------------------------------------------------------
   # Routine to process the SKELVERS statemnent. The format of the statement is:
   #
-  # )SKELVERS  $Id: processSkeleton.pm,v 1.135 2019/01/25 01:36:16 db2admin Exp db2admin $
+  # )SKELVERS  $Id: processSkeleton.pm,v 1.140 2019/05/01 02:00:21 db2admin Exp db2admin $
   #
   # Usage: processVERSION(<control card>)
   # Returns: sets the internal variable skelVers
@@ -8538,7 +8551,7 @@ sub processLOGON {
     }
     else { # all ok to proceed ....
       if ( $skelConnection{$skelCurrentConnection} = DBI->connect ("DBI:$DBType:$DBName", "$DBUser", "$DBPwd") ) { # A returned value means that all is OK
-        $skelConnection{$skelCurrentConnection}->{LongReadLen} = 0; # dont ever bring back data automatically for long fields [only used with BLOB_READ] 
+        $skelConnection{$skelCurrentConnection}->{LongReadLen} = 0; # dont ever bring back data automatically for long fields [only used with blob_read] 
         displayDebug("Connection to $DBName using $DBType and user $DBUser was completed successfully",2,$currentSubroutine);
         # ---------  if blob_read doesn't exist ------------------------------
         #$skelConnection{$skelCurrentConnection}->{LongReadLen} = 5000; # limits BLOB reads to 5000 bytes
