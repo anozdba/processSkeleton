@@ -2,7 +2,7 @@
 # --------------------------------------------------------------------
 # runSkeleton.cgi
 #
-# $Id: runSkeleton.cgi,v 1.9 2019/01/30 00:20:05 db2admin Exp db2admin $
+# $Id: runSkeleton.cgi,v 1.10 2019/05/02 00:04:13 root Exp root $
 #
 # Description:
 # Script to process the skeleton passed as the first parameter
@@ -14,6 +14,9 @@
 #
 # ChangeLog:
 # $Log: runSkeleton.cgi,v $
+# Revision 1.10  2019/05/02 00:04:13  root
+# improved parameter checking
+#
 # Revision 1.9  2019/01/30 00:20:05  db2admin
 # change the parameter names referenced in commonFunctions.pm
 #
@@ -108,7 +111,7 @@ if ( $QUERY_STRING ne '' ) { $outputMode = 'HTTP' ; } # if the $QUERY_STRING var
 
 # Usage subroutine
 
-my $ID = '$Id: runSkeleton.cgi,v 1.9 2019/01/30 00:20:05 db2admin Exp db2admin $';
+my $ID = '$Id: runSkeleton.cgi,v 1.10 2019/05/02 00:04:13 root Exp root $';
 my @V = split(/ /,$ID);
 my $Version=$V[2];
 my $Changed="$V[3] $V[4]";
@@ -268,6 +271,15 @@ sub setSkelOptions {
     if ( uc(substr($_,0,3)) eq ")CM" ) { # it is a comment so may be a driver parameter
       if ( $_ =~ /Input Parameter/i ) { # input parameter ....
         my ($prm, $var, $valid) = ( $_ =~ /[Rr]: \((.*)\)\s*(\S*)\s*(\S*)/ );
+		# check to make sure that the parm hasn't already been defined
+        if ( $parmString =~ /$prm/ ) { 
+          if ( defined($skelParms{$prm}) ) { # parameter already set within the control cards
+            print STDERR "Parameter $prm [from file] already in use - duplicated parameter - it will be overridden\nOLD: $skelParms{$prm} NEW: $var\n"; 
+          }
+          else {
+            print STDERR "Parameter $prm [from file] already in use - duplicated parameter - it will be ignored as this is one of the reserved parms (h?sSvVxX)\n"; 
+          }
+        }		
         $parmString .= "$prm:";
         $skelParms{$prm} = $var;
         $skelParmsValid{$prm} = $valid;
@@ -275,9 +287,18 @@ sub setSkelOptions {
       }
       elsif ( $_ =~ /Input Flag/i ) { # input flag .... sets a boolean value
         # of the form: Input Flag: (v) debugLevel
-        my ($prm, $var, $valid) = ( $_ =~ /[gG]: \((.*)\)\s*(\S*)\s*(\S*)/ );
-        if ( $var eq '' ) { print "Format of the parameter should be : 'Input Flag: (v) debugLevel'\n"; }
+        my ($prm, $var, $valid) = ( $_ =~ /[gG]: *\((.*)\)\s*(\S*)\s*(\S*)/ );
+        if ( $var eq '' ) { print "Format of the parameter should be : 'Input Flag: (v) debugLevel validation'\n"; }
         else {
+		  # check to make sure theat the parm hasn't already been defined
+          if ( $parmString =~ /$prm/ ) { 
+            if ( defined($skelParms{$prm}) ) { # parameter already set within the control cards
+              print STDERR "Parameter $prm [from file] already in use - duplicated parameter - it will be overridden\nOLD: $skelParms{$prm} NEW: $var\n"; 
+            }
+            else {
+              print STDERR "Parameter $prm [from file] already in use - duplicated parameter - it will be ignored as this is one of the reserved parms (h?sSvVxX)\n"; 
+            }
+          }		  
           $parmString .= "$prm";
           $skelParms{$prm} = $var;
           $skelParmsValid{$prm} = $valid;
