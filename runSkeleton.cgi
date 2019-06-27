@@ -2,7 +2,7 @@
 # --------------------------------------------------------------------
 # runSkeleton.cgi
 #
-# $Id: runSkeleton.cgi,v 1.10 2019/05/02 00:04:13 root Exp root $
+# $Id: runSkeleton.cgi,v 1.10 2019/05/05 23:23:06 db2admin Exp db2admin $
 #
 # Description:
 # Script to process the skeleton passed as the first parameter
@@ -14,8 +14,8 @@
 #
 # ChangeLog:
 # $Log: runSkeleton.cgi,v $
-# Revision 1.10  2019/05/02 00:04:13  root
-# improved parameter checking
+# Revision 1.10  2019/05/05 23:23:06  db2admin
+# Improve parameter checking
 #
 # Revision 1.9  2019/01/30 00:20:05  db2admin
 # change the parameter names referenced in commonFunctions.pm
@@ -103,6 +103,7 @@ my %parameterIsFlag = ();  # array indicating if a parameter has values or is ju
 my $parmString;
 my $typeOfUse;
 my %DBIParameter;
+my $extraVariables = '';   # extra supplied variables to be added to the processSkeleton call
 
 #$cf_debugLevel = 0;
 $getOpt_calledBy = $0;
@@ -111,7 +112,7 @@ if ( $QUERY_STRING ne '' ) { $outputMode = 'HTTP' ; } # if the $QUERY_STRING var
 
 # Usage subroutine
 
-my $ID = '$Id: runSkeleton.cgi,v 1.10 2019/05/02 00:04:13 root Exp root $';
+my $ID = '$Id: runSkeleton.cgi,v 1.10 2019/05/05 23:23:06 db2admin Exp db2admin $';
 my @V = split(/ /,$ID);
 my $Version=$V[2];
 my $Changed="$V[3] $V[4]";
@@ -290,7 +291,7 @@ sub setSkelOptions {
         my ($prm, $var, $valid) = ( $_ =~ /[gG]: *\((.*)\)\s*(\S*)\s*(\S*)/ );
         if ( $var eq '' ) { print "Format of the parameter should be : 'Input Flag: (v) debugLevel validation'\n"; }
         else {
-		  # check to make sure theat the parm hasn't already been defined
+		  # check to make sure that the parm hasn't already been defined
           if ( $parmString =~ /$prm/ ) { 
             if ( defined($skelParms{$prm}) ) { # parameter already set within the control cards
               print STDERR "Parameter $prm [from file] already in use - duplicated parameter - it will be overridden\nOLD: $skelParms{$prm} NEW: $var\n"; 
@@ -304,6 +305,20 @@ sub setSkelOptions {
           $skelParmsValid{$prm} = $valid;
           $parameterIsFlag{$prm} = 1;
           if ( $debugLevel > 0 ) { print STDERR "From File ($file): Flag $prm read in and assigned to $var\n"; }
+        }
+      }
+      elsif ( $_ =~ /Input Variable/i ) { # input variable .... sets a variable value
+        # of the form: Input Variable: variable value
+        my ($var, $val) = ( $_ =~ /[eE]: *([\S]*)\s*(.*)/ );
+        if ( $var eq '' ) { print "Format of the parameter should be : 'Input Parameter: variable value'\n"; }
+        else {
+          if ( $extraVariables eq '' ) {
+            $extraVariables = "$var=$val";
+          }
+          else {
+            $extraVariables .= ",$var=$val";
+          }
+          if ( $debugLevel > 0 ) { print STDERR "From File ($file): Variable $var has had $val assigned\n"; }
         }
       }
       elsif ( $_ =~ /Type of use/i ) { # type of output
@@ -330,7 +345,7 @@ sub setSkelOptions {
         if ( $debugLevel > 0 ) { print STDERR "From File ($file): DBI Module required: $DBIModule\n";  }
       }
       elsif ( $_ =~ /DBI Parameter/i ) { # type of output
-        my ($prm, $var) = ( $_ =~ /DBI Parameter : \((.*)\)\s*(\S*)/ );
+        my ($prm, $var) = ( $_ =~ /DBI Parameter: \((.*)\)\s*(\S*)/ );
         $DBIParameter{$prm} = $var;
         if ( $debugLevel > 0 ) { print STDERR "From File ($file): DBI Parm $var read in and assigned to $prm\n"; }
       }
@@ -413,7 +428,7 @@ if ( $outputMode eq 'HTTPDL' ) { $outputMode = 'HTTP'; }
 
 $debugLevel = 0;
 my $silent = "No";
-my $skelParameters = '';
+my $skelParameters = $extraVariables;
 my $parmCount = 0;
 
 # ----------------------------------------------------
@@ -534,6 +549,7 @@ while ( getOpt($parmString) ) {
 
 # flesh out the skelParameters with dynamically created parameters
 
+
 foreach my $key (keys %skelParmsValue) {
   if ( $skelParameters eq '' ) {
     $skelParameters = "$skelParms{$key}=$skelParmsValue{$key}";
@@ -558,5 +574,6 @@ generateDates();
 
 if ( $debugLevel > 0 ) { print STDERR "calling: processSkeleton($skeleton, \"$skelParameters\")\n"; }
 my $a = processSkeleton($skeleton, "$skelParameters");
-print  "$a\n";
+print "$a\n";
+
 
