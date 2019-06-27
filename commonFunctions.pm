@@ -2,7 +2,7 @@
 # --------------------------------------------------------------------
 # commonFunctions.pm
 #
-# $Id: commonFunctions.pm,v 1.51 2019/04/29 23:33:36 db2admin Exp db2admin $
+# $Id: commonFunctions.pm,v 1.57 2019/06/24 04:55:07 db2admin Exp db2admin $
 #
 # Description:
 # Package cotaining common code.
@@ -179,6 +179,24 @@
 #
 # ChangeLog:
 # $Log: commonFunctions.pm,v $
+# Revision 1.57  2019/06/24 04:55:07  db2admin
+# convert %2B to + if input from the web (when processing parameters)
+#
+# Revision 1.56  2019/06/09 08:45:47  db2admin
+# add in some more tablespace states
+#
+# Revision 1.55  2019/05/29 01:46:32  db2admin
+# correct syntax error in latest code
+#
+# Revision 1.54  2019/05/27 21:22:07  db2admin
+# modify myDate to correct problem with identifying passed parameters
+#
+# Revision 1.53  2019/05/15 01:16:14  db2admin
+# correct bug in the processDuration routine
+#
+# Revision 1.52  2019/05/06 02:07:20  db2admin
+# return number of primary keys found when data processed by ingestData
+#
 # Revision 1.51  2019/04/29 23:33:36  db2admin
 # modify ingestData to force the creation of key entries as part of the returned data (via variable $dontGenKeyEntry)
 # To activate set this variable to zero
@@ -721,7 +739,7 @@ sub timeDiff {
 
 sub commonVersion {
 
-  my $ID = '$Id: commonFunctions.pm,v 1.51 2019/04/29 23:33:36 db2admin Exp db2admin $';
+  my $ID = '$Id: commonFunctions.pm,v 1.57 2019/06/24 04:55:07 db2admin Exp db2admin $';
   my @V = split(/ /,$ID);
   my $nameStr=$V[1];
   (my $name,my $x) = split(",",$nameStr);
@@ -944,7 +962,9 @@ sub testCommonFunctions {
 
   # processDuration
  
+  testProcessDuration('2430 minutes', 'T', '0000-00-01 16.30.00',1);
   testProcessDuration('1 day 2 minutes', 'M', '1442', 1);
+  displayDebug("Note that the next test will fail if the period includes 29th Feb (in reality the result should be 528482 and not the value tested for)",0,$currentRoutine);
   testProcessDuration('1 day 2 minutes 1 year', 'M', '527042', 1);
   testProcessDuration('1 day 2 minutes', 'S', '86520', 1);
   testProcessDuration('1 day 2 minutes 2 years', 'D', '732', 1);
@@ -1107,6 +1127,7 @@ sub getOpt {
   }
  
   $QUERY_STRING =~ s/%27/\'/g; 
+  $QUERY_STRING =~ s/%2B/\+/g; 
   # Define the variables .....
 
   my $i;
@@ -1826,7 +1847,7 @@ sub processDuration {
       if ( $hour > 23 ) {
         $tmp = $hour % 24; 
         $day = $day + ( ($hour - $tmp) / 24);
-        $min = $tmp;
+        $hour = $tmp;
       }      
       if ( $month > 11 ) {
         $tmp = $month % 12; 
@@ -2145,12 +2166,12 @@ sub myDate {
   if ( length($parms[0]) > 5 ) {
     if ( $parms[0] =~ /[:=]/ ) { # of the form parm:value or parm=value
       if ( uc(substr($parms[0],0,4)) eq "DATE" ) {
-        @pv_pair = split(/\:/,$parms[0],2);
+        @pv_pair = split(/[:=]/,$parms[0],2);
         $Date = $pv_pair[1];
         $GenDays = "Y";
       }
       elsif ( uc(substr($parms[0],0,4)) eq "DAYS" ) {
-        @pv_pair = split(/\:/,$parms[0],2);
+        @pv_pair = split(/[:=]/,$parms[0],2);
         $parms[0] = $pv_pair[1];     # strip off the DAYS=/DAYS: bit
       }
       else {
@@ -2166,7 +2187,7 @@ sub myDate {
     if ( length($parms[1]) > 5 ) {
       if ( $parms[1] =~ /[:=]/ ) { # of the form parm:value or parm=value
         if ( uc(substr($parms[1],0,4)) eq "BASE" ) {
-          @pv_pair = split(/\:/,$parms[1],2);
+          @pv_pair = split(/[:=]/,$parms[1],2);
           $Base = $pv_pair[1];
         }
         else {
@@ -3215,6 +3236,7 @@ sub ingestData {
   my $multiLine = 0;
   my $multiLineKey = '';
   my $multiLineVar = '';
+  my $entriesFound = 0;
   
   if ( !defined($include) ) { $include = ''; }
   if ( uc($include) eq 'ALL' ) { $include = ''; }
@@ -3277,7 +3299,8 @@ sub ingestData {
       displayDebug ("Primary Key Found:$currentPrimary" ,2,$currentRoutine);
       if ( ($include eq '' ) || ($currentPrimary =~ /$include/ )) { # procesas this key
         displayDebug ("Primary Key included:$currentPrimary",2,$currentRoutine);
-        $ingestedData ->{"$currentPrimary"}{"$parts[0]"} = $currentPrimary;
+        $entriesFound++;       # increment the count of primary keys found and accepted
+        # $ingestedData ->{"$currentPrimary"}{"$parts[0]"} = $currentPrimary;
       }
       else { # dont process this key
         displayDebug ("Primary Key Found:$currentPrimary but does not match include list ($include) so ignored",2,$currentRoutine);
@@ -3375,6 +3398,9 @@ sub ingestData {
       next;
     }
   }
+  
+  return $entriesFound;
+  
 }  # end of ingestData
 
 sub tablespaceStateLit {
@@ -3421,6 +3447,10 @@ sub tablespaceStateLit {
     if ( $tsState & 0x00008000) { $stateDesc .= ',Drop pending'; }
     if ( $tsState & 0x00010000) { $stateDesc .= ',Suspend Write'; }
     if ( $tsState & 0x00020000) { $stateDesc .= ',Load in progress'; }
+    if ( $tsState & 0x00080000) { $stateDesc .= ',Move in progress'; }
+    if ( $tsState & 0x00100000) { $stateDesc .= ',Move has started'; }
+    if ( $tsState & 0x00200000) { $stateDesc .= ',Move has terminated'; }
+    if ( $tsState & 0x02000000) { $stateDesc .= ',Storage may be defined'; }
     if ( $tsState & 0x04000000) { $stateDesc .= ',StorDef is in final state'; }
     if ( $tsState & 0x08000000) { $stateDesc .= ',StorDef was change prior to roll forward'; }
     if ( $tsState & 0x10000000) { $stateDesc .= ',DMS rebalance in progress'; }
@@ -3434,3 +3464,4 @@ sub tablespaceStateLit {
 } # end of tablespaceStateLit
 
 1;
+
