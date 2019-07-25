@@ -2,7 +2,7 @@
 # --------------------------------------------------------------------
 # runSkeleton.cgi
 #
-# $Id: runSkeleton.cgi,v 1.10 2019/05/05 23:23:06 db2admin Exp db2admin $
+# $Id: runSkeleton.cgi,v 1.13 2019/07/16 23:18:35 db2admin Exp db2admin $
 #
 # Description:
 # Script to process the skeleton passed as the first parameter
@@ -14,6 +14,15 @@
 #
 # ChangeLog:
 # $Log: runSkeleton.cgi,v $
+# Revision 1.13  2019/07/16 23:18:35  db2admin
+# display SQL when diag level reaches 0
+#
+# Revision 1.12  2019/06/27 23:49:12  db2admin
+# make sure that DBI Parameter is case insensitive
+#
+# Revision 1.11  2019/06/27 04:51:22  db2admin
+# add in 'Input Variable:' parameter
+#
 # Revision 1.10  2019/05/05 23:23:06  db2admin
 # Improve parameter checking
 #
@@ -112,7 +121,7 @@ if ( $QUERY_STRING ne '' ) { $outputMode = 'HTTP' ; } # if the $QUERY_STRING var
 
 # Usage subroutine
 
-my $ID = '$Id: runSkeleton.cgi,v 1.10 2019/05/05 23:23:06 db2admin Exp db2admin $';
+my $ID = '$Id: runSkeleton.cgi,v 1.13 2019/07/16 23:18:35 db2admin Exp db2admin $';
 my @V = split(/ /,$ID);
 my $Version=$V[2];
 my $Changed="$V[3] $V[4]";
@@ -345,7 +354,7 @@ sub setSkelOptions {
         if ( $debugLevel > 0 ) { print STDERR "From File ($file): DBI Module required: $DBIModule\n";  }
       }
       elsif ( $_ =~ /DBI Parameter/i ) { # type of output
-        my ($prm, $var) = ( $_ =~ /DBI Parameter: \((.*)\)\s*(\S*)/ );
+        my ($prm, $var) = ( $_ =~ /[rR]: \((.*)\)\s*(\S*)/ );
         $DBIParameter{$prm} = $var;
         if ( $debugLevel > 0 ) { print STDERR "From File ($file): DBI Parm $var read in and assigned to $prm\n"; }
       }
@@ -465,7 +474,7 @@ while ( getOpt($parmString) ) {
    $skelDebugLevel++;
    $calcDebugLevel++;
    $debugLevel++;
-   if ( $skelDebugLevel == 1) { # only set the parameter once
+   if ( $skelDebugLevel == 0) { # only set the parameter once
      if ( $skelParameters eq '' ) { 
        $skelParameters = 'SKL_SHOWSQL=YES';
      }
