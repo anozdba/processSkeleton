@@ -2,7 +2,7 @@
 # --------------------------------------------------------------------
 # processSkeleton.pm
 #
-# $Id: processSkeleton.pm,v 1.140 2019/05/01 02:00:21 db2admin Exp db2admin $
+# $Id: processSkeleton.pm,v 1.144 2019/07/22 02:32:12 db2admin Exp db2admin $
 #
 # Description:
 # Script to process a skeleton
@@ -31,6 +31,18 @@
 # ChangeLog:
 #
 # $Log: processSkeleton.pm,v $
+# Revision 1.144  2019/07/22 02:32:12  db2admin
+# add in comments for 1.142
+#
+# Revision 1.143  2019/07/22 02:28:09  db2admin
+# add in new function DATEADD ustilising commonFunctions.pm routines performDateAddition and performDateSubtraction
+#
+# Revision 1.142  2019/07/16 23:47:58  db2admin
+# if the line to be displayed isn't supplied to outputLine then initialise it to an empty string
+#
+# Revision 1.141  2019/07/03 05:29:01  db2admin
+# modify processing to enable cell styling for FVTAB
+#
 # Revision 1.140  2019/05/01 02:00:21  db2admin
 # ensure indentLevel is initialised in formatSQL
 #
@@ -47,11 +59,11 @@
 # remove timeAdd from imported modules list
 #
 # Revision 1.135  2019/01/25 01:36:16  db2admin
-# adjust parametere def for commonFunctions.pm
+# adjust parameter def for commonFunctions.pm
 #
 # Revision 1.134  2019/01/22 23:58:07  db2admin
 # Modify header capitalisation to also capitalise characters after an opening bracket
-# Chnage to default to not alter headers
+# Change to default to not alter headers
 #
 # Revision 1.133  2019/01/22 23:02:24  db2admin
 # 1. Add in DISPLAYDIFF function
@@ -117,7 +129,7 @@
 # which will set the variable var1 in scope main
 #
 # Revision 1.119  2018/11/29 01:18:11  db2admin
-# add in code to allow imbeded skeletons to reference variables in calling skeletons
+# add in code to allow imbedded skeletons to reference variables in calling skeletons
 #
 # Revision 1.118  2018/11/22 02:57:11  db2admin
 # dont strip off quotes from supplied imbed name if it is the only supplied parameter
@@ -146,7 +158,7 @@
 # 3. Allow the use of the following variables (reflecting the current internal variable values):
 #    SKELDELIMITER SKELDEBUGMODULES SKELSHOWSQL SKELVERBOSESQLERRORS OUTPUTMODE
 #    SKELMAXOUTPUT SKELMAXROWS SKELMAXTABLEOUT SKELDEBUGLEVEL TESTROUTINES INDEXCASEINSENSITIVE
-# 4. Rewrite the routine to allow the setting of vaiables from internal variables to ease
+# 4. Rewrite the routine to allow the setting of variables from internal variables to ease
 #    maintenance
 # 5. Allow outputMode to be set on the )SET or )ASET commands
 #
@@ -179,8 +191,8 @@
 # Revision 1.105  2018/10/09 03:04:19  db2admin
 # 1. add in new SPLIT function
 # )FUNC SPLIT x = "string" "delimiter" <element to return> <max elements>
-# 2. Modify INSTR function to include start pos or Occurence
-# )FUNX INSTR x = 'string to search for> <string to search in> [<start pos>|OCC:<occurence>]
+# 2. Modify INSTR function to include start pos or Occurrence
+# )FUNX INSTR x = 'string to search for> <string to search in> [<start pos>|OCC:<occurrence>]
 #
 # Revision 1.104  2018/09/06 08:27:04  db2admin
 # 1. Correct an issue looping in DOF definitions when wrong control type entered
@@ -568,7 +580,7 @@ use strict;
 use warnings;
 use Data::Dumper qw(Dumper);
 use User::pwent; # for getpwuid and getgrnam
-use commonFunctions qw(trim ltrim rtrim commonVersion getOpt myDate $getOpt_web $getOpt_optName $getOpt_min_match $getOpt_optValue getOpt_form @myDate_ReturnDesc $cF_debugLevel $getOpt_calledBy $parmSeparators processDirectory $maxDepth $fileCnt $dirCnt localDateTime displayMinutes timeDiff  timeAdj convertToTimestamp getCurrentTimestamp);
+use commonFunctions qw(trim ltrim rtrim commonVersion getOpt myDate $getOpt_web $getOpt_optName $getOpt_min_match $getOpt_optValue getOpt_form @myDate_ReturnDesc $cF_debugLevel $getOpt_calledBy $parmSeparators processDirectory $maxDepth $fileCnt $dirCnt localDateTime displayMinutes timeDiff  timeAdj convertToTimestamp getCurrentTimestamp performDateAddition performDateSubtraction processDuration);
 use calculator qw(calcVersion evaluateInfix $calcDebugLevel $calcDebugModules $calc_errorToSTDOUT);
 use Exporter;
 # use Data::UUID;           # only useful if package installed
@@ -708,8 +720,8 @@ my $FORM_has_been_opened = 0;             # flag to control closing/opening of H
 my $FIELDSET_has_been_opened = 0;         # flag to control closing/opening of HTML FIELDSET elements
 my %cellStyle = ();                       # matches a cell style to a cell (this is a 2 key array {colimn}{condition}
 my %rowStyle = ();                        # matches a cell style to a cell
-my $currentRowStyle = '';                 # row style defined for the current row
-my $currentCellStyle = '';                # row style defined for the current cell
+my $currentRowStyle = '';                 # style defined for the current row
+my $currentCellStyle = '';                # style defined for the current cell
 my $convertHeaders = 0;                   # flag indicating if FDOF/FTAB/FVTAB headers should be adjusted
 my $selectCond = '';                      # selection condition to be applied to loops 
 my $styleCount = 0;                       # incrementing count of style cards processed
@@ -884,7 +896,7 @@ sub skelVersion {
   # -----------------------------------------------------------
 
   my $currentSubroutine = 'skelVersion'; 
-  my $ID = '$Id: processSkeleton.pm,v 1.140 2019/05/01 02:00:21 db2admin Exp db2admin $';
+  my $ID = '$Id: processSkeleton.pm,v 1.144 2019/07/22 02:32:12 db2admin Exp db2admin $';
   my @V = split(/ /,$ID);
   my $nameStr=$V[1];
   my @N = split(",",$nameStr);
@@ -3083,7 +3095,7 @@ sub displayDataHorizontally {
   } # end of for
   
   if ( $outputMode eq "HTTP" ) {                              # output it as a html table
-    $currentRowStyle = checkRowStyleSetting();
+    $currentRowStyle = checkRowStyleSetting('');
     outputLine("<tr $currentRowStyle> " . $tStr . " </tr>");                   # output the row information surrounded by the row tags
   }
   else {
@@ -5403,7 +5415,7 @@ sub checkCellStyleSetting {
   # Routine to check out if any special style should be invoked for this row
   #
   # Usage: checkStyleSetting()
-  # Returns: will return the applicable styl;e of a null string
+  # Returns: will return the applicable style or a null string
   # -----------------------------------------------------------  
   
   my $currentSubroutine = 'checkCellStyleSetting';
@@ -5441,6 +5453,9 @@ sub checkRowStyleSetting {
   
   my $currentSubroutine = 'checkRowStyleSetting';
   my $substitutedTest = '';
+  my $displayHeading = shift;   # only used for FVTAB processing to identify the row
+  
+  if ( $displayHeading ne '' ) { setVariable('FVTAB_ROW', $displayHeading) ; } 
   
   if ( ! keys %rowStyle ) { return '' } ; # if no tests then just return
   
@@ -5527,7 +5542,7 @@ sub processFTAB {
               displayDebug("indexTarget: $indexTarget: $fType",1,$currentSubroutine);
               $tStr = "";                                       # Initialise the output line 
               if ( $outputMode eq "HTTP" ) {                    # output it as a html table
-                $currentRowStyle = checkRowStyleSetting();      # see what style should be used
+                $currentRowStyle = checkRowStyleSetting('');      # see what style should be used
                 $tStr = "<tr $currentRowStyle>";    # set new table row tag
                 $FTAB_output_len += length($tStr);
               }
@@ -6044,7 +6059,9 @@ sub processFVTAB {
                   $headerName = headerise($headerName);
                 }
                 if ( $outputMode eq "HTTP" ) {                          # output it as a html table cell
-                    outputLine("<tr><td>" . $headerName . "</td><td>" . $skelTabValue . "</td></tr>");
+                  $currentRowStyle = checkRowStyleSetting($headerName);
+                  $currentCellStyle = checkCellStyleSetting($headerName);
+                  outputLine("<tr $currentRowStyle ><td>" . $headerName . "</td><td $currentCellStyle>" . $skelTabValue . "</td></tr>");
                 }
                 else { # character field ... just normal left alignment
                   outputLine("!" . $headerName . " !" . $skelTabValue);
@@ -6399,7 +6416,7 @@ sub processFILE {
   # a  )FILE card retrieves information about a file
   #
   # Usage: processFILE(<control card>)
-  # Returns: nothign but sets a number of internal variables
+  # Returns: nothing but sets a number of internal variables
   # -----------------------------------------------------------
 
   my $card = shift;             # will hold card type (not the full input card)
@@ -6409,8 +6426,12 @@ sub processFILE {
     if ( ( $skelDOTSkipCards eq "No" ) ) { # not excluded because of a )DOT that returned zero rows
     
       my $filename = getToken($card);       
-      getFileInformation($filename, 'FILE');
-    
+      if ( -e "$filename" ) {
+        getFileInformation($filename, 'FILE');
+      }
+      else { # file doesn't exist
+        displayError("File \"$filename\" doesn't exist",$currentSubroutine);
+      }
     }
   }
   
@@ -8379,7 +8400,7 @@ sub processSKELVERS {
   # -----------------------------------------------------------
   # Routine to process the SKELVERS statemnent. The format of the statement is:
   #
-  # )SKELVERS  $Id: processSkeleton.pm,v 1.140 2019/05/01 02:00:21 db2admin Exp db2admin $
+  # )SKELVERS  $Id: processSkeleton.pm,v 1.144 2019/07/22 02:32:12 db2admin Exp db2admin $
   #
   # Usage: processVERSION(<control card>)
   # Returns: sets the internal variable skelVers
@@ -8459,26 +8480,47 @@ sub processLOGOFF {
   if ( ( $skelSelSkipCards eq "No" ) && ( $skelDOTSkipCards eq "No" ) ) { # not skipping cards
     my $DBConnection = getToken($card);                 # Literal that defines the connection to close
     
-    if ( ! defined($skelConnection{$DBConnection}) ) { #  Connection not found
-      displayError("Connection $DBConnection not found so )LOGOFF card ignored");
-      return;
-    }
-    # Connection should be closed
-    $skelConnection{$DBConnection}->disconnect;     # Close the DB connection
+    if ( defined($DBConnection) && ( $DBConnection ne '' ) ) { # a connection ID was supplied 
+      if ( ! defined($skelConnection{$DBConnection}) ) { #  Connection not found
+        displayError("Connection $DBConnection not found so )LOGOFF card ignored");
+        return;
+      }
+      # Connection should be closed
+      $skelConnection{$DBConnection}->disconnect;     # Close the DB connection
 
-    if ( defined($skelConnection{$DBConnection}->errstr) ) {
-      displayError("Disconnect Error: $skelConnection{$DBConnection}->errstr",$currentSubroutine);
+      if ( defined($skelConnection{$DBConnection}->errstr) ) {
+        displayError("Disconnect Error: $skelConnection{$DBConnection}->errstr",$currentSubroutine);
+      }
+      elsif ( defined($DBI::errstr) ) {
+        if ( $DBI::errstr ne '' ) {
+          displayError ("Disconnect Error: $DBI::errstr",$currentSubroutine);
+        }
+      }
+      else {
+        delete $skelConnection{$DBConnection};    # remove the connection reference
+      }
+
+      displayDebug("Connection $DBConnection has now been closed",2,$currentSubroutine);
     }
-    elsif ( defined($DBI::errstr) ) {
-      if ( $DBI::errstr ne '' ) {
-        displayError ("Disconnect Error: $DBI::errstr",$currentSubroutine);
+    else { # no connection supplied so close all open connections .....
+      foreach my $conn ( keys %skelConnection ) { # loop through the connections ....
+        # Connection should be closed
+        $skelConnection{$conn}->disconnect;     # Close the DB connection
+
+        if ( defined($skelConnection{$conn}->errstr) ) {  
+          displayError("Disconnect Error for $conn: $skelConnection{$conn}->errstr",$currentSubroutine);
+        }
+        elsif ( defined($DBI::errstr) ) {
+          if ( $DBI::errstr ne '' ) {
+            displayError ("Disconnect Error for $conn: $DBI::errstr",$currentSubroutine);
+          }
+        }
+        else {
+          delete $skelConnection{$conn};    # remove the connection reference
+        }
+        displayDebug("Connection $conn has now been closed",2,$currentSubroutine);
       }
     }
-    else {
-      delete $skelConnection{$DBConnection};    # remove the connection reference
-    }
-
-    displayDebug("Connection $DBConnection has now been closed",2,$currentSubroutine);
   }
   else {
     displayDebug("Skipped: $card. Sel Count = $skelSELCount, SEL Resume Level = $skelSEL_resumeLevel",2);
@@ -8910,7 +8952,7 @@ sub processFunction {
   #     SPLIT            - returns the xth value in the string delimted by the supplied delimiter ('' if not found)
   #                        )FUNC SPLIT RET = <string to split> <string to be split on> [<entry to return>]
   #     INSTR            - returns the position of one string in another (-1 if not found)
-  #                        )FUNC INSTR RET = <string to search for> <string to be searched> [<start pos|OCC:occurence>]
+  #                        )FUNC INSTR RET = <string to search for> <string to be searched> [<start pos|OCC:occurrence>]
   #     LEFT             - return a number of characters from the left hand side of a string
   #     RIGHT            - return a number of characters from the right hand side of a string
   #     MID              - return a number of characters from the middle of a a string
@@ -8925,10 +8967,10 @@ sub processFunction {
   #     LOWER            - Returns the string transformed to all lower case
   #     UPPER            - Returns the string transformed to all upper case
   #
-  #     TIMEDIFF         - difference in minutes between 2 dates
-  #     DISPLAYDIFF      - Difference between 2 dates converted to a human readable form
+  #     TIMEDIFF         - difference in minutes between 2 timestamps
+  #     DISPLAYDIFF      - Difference between 2 timestamps converted to a human readable form
   #     DISPLAYMIN       - Takes mins and returns a display variable of days/hrs/mins
-  #     TIMEADJ          - varies a tyimestamp by a number of minutes
+  #     TIMEADJ          - varies a timestamp by a number of minutes
   #     REFORMATTS       - Converts 'Sep 17, 2017 6:00:07 PM' to standard timestamp format
   #     
   # Usage: processFunction(<Function>,<Parameters>)
@@ -9024,7 +9066,7 @@ sub processFunction {
   elsif ( uc($function) eq "INSTR" ) { # instr function
     my $srchString = getToken($card);                       # search string
     my $baseString = getToken($card);                       # string to be searched
-    my $thirdParm = getToken($card);                        # third parameter ; either starting pos or OCCxxx where then it becomes the string occurence
+    my $thirdParm = getToken($card);                        # third parameter ; either starting pos or OCCxxx where then it becomes the string occurrence
     
     if ( ($srchString =~ /^'/) || ($srchString =~ /^"/) ) {     # it is a quoted string ....
       $srchString = substr($srchString,1,length($srchString)-2); # strip off the quotes
@@ -9037,20 +9079,20 @@ sub processFunction {
     # INSTR MUST have at least 2 parms 
     
     if ( $baseString eq "" ) { # 2 parameters haven't been supplied
-      displayError("INSTR function format is:\n)FUNC INSTR xxx = <search string> <string> [startpos|OCC:occurence]\nNote: It MUST have 2 parameters - Function will return -1",$currentSubroutine);
+      displayError("INSTR function format is:\n)FUNC INSTR xxx = <search string> <string> [startpos|OCC:occurrence]\nNote: It MUST have 2 parameters - Function will return -1",$currentSubroutine);
       return -1;
     }
     
     if ( $thirdParm eq '' ) { $thirdParm = 0 } # set a default value of zero for the third parm
-    elsif ( ! isNumeric($thirdParm) ) { # parameter is not numeric so may be occurence 
-      if ( uc(substr( $thirdParm . "   ", 0,4)) eq "OCC:" ) { # check if we are looking for an occurence value
+    elsif ( ! isNumeric($thirdParm) ) { # parameter is not numeric so may be occurrence 
+      if ( uc(substr( $thirdParm . "   ", 0,4)) eq "OCC:" ) { # check if we are looking for an occurrence value
         my $occ = substr($thirdParm,4);
         if ( ! isNumeric($occ) ) {
-          displayError("INSTR function format is:\n)FUNC INSTR xxx = <search string> <string> [startpos|OCC:occurence]\nNote: Third parm must be either numeric or start with OCC: - 3rd parm will be assumed 1",$currentSubroutine);
+          displayError("INSTR function format is:\n)FUNC INSTR xxx = <search string> <string> [startpos|OCC:occurrence]\nNote: Third parm must be either numeric or start with OCC: - 3rd parm will be assumed 1",$currentSubroutine);
           $thirdParm = 0;
         }
-        else { # we need to find an occurence of the string
-          my $spot = index($baseString,$srchString,0); # first occurence
+        else { # we need to find an occurrence of the string
+          my $spot = index($baseString,$srchString,0); # first occurrence
           my $occCount = 1;
           while ( ($occCount < $occ) & ( $spot > -1 ) ) { # still more searching to do
         $spot = index($baseString,$srchString,$spot+1); # find the next entry
@@ -9060,7 +9102,7 @@ sub processFunction {
     }
       }
       else { # not numeric and not OCC: so ignore it
-        displayError("INSTR function format is:\n)FUNC INSTR xxx = <search string> <string> [startpos|OCC:occurence]\nNote: Third parm must be either numeric or start with OCC: - 3rd parm will be assumed 0",$currentSubroutine);
+        displayError("INSTR function format is:\n)FUNC INSTR xxx = <search string> <string> [startpos|OCC:occurrence]\nNote: Third parm must be either numeric or start with OCC: - 3rd parm will be assumed 0",$currentSubroutine);
         $thirdParm = 0;
       }
     }
@@ -9095,24 +9137,24 @@ sub processFunction {
     # SPLIT MUST have at least 2 parms
 
     if ( $strDelim eq "" ) { # 2 parameters haven't been supplied
-      displayError("SPLIT function format is:\n)FUNC SPLIT xxx = <base string> <delimiter> [occurence] [max elements]\nNote: It MUST have 2 parameters - Function will return ''",$currentSubroutine);
+      displayError("SPLIT function format is:\n)FUNC SPLIT xxx = <base string> <delimiter> [occurrence] [max elements]\nNote: It MUST have 2 parameters - Function will return ''",$currentSubroutine);
       return '';
     }
 
-    if ( $thirdParm eq '' ) { $thirdParm = 0 } # set a default value of zero for the occurence
+    if ( $thirdParm eq '' ) { $thirdParm = 0 } # set a default value of zero for the occurrence
 
     if ( ! isNumeric($thirdParm) ) {
-      displayError("SPLIT function format is:\n)FUNC SPLIT xxx = <base string> <delimiter> [occurence] [max elements]\nNote: If supplied, the third parameter must be numeric - it will be assumed to be 0",$currentSubroutine);
+      displayError("SPLIT function format is:\n)FUNC SPLIT xxx = <base string> <delimiter> [occurrence] [max elements]\nNote: If supplied, the third parameter must be numeric - it will be assumed to be 0",$currentSubroutine);
       $thirdParm = 0;
     }
 
     if ( ( $fourthParm ne '' ) && ( ! isNumeric($fourthParm)) ) {
-      displayError("SPLIT function format is:\n)FUNC SPLIT xxx = <base string> <delimiter> [occurence] [max elements]\nNote: If supplied, the fourth parameter must be numeric - it will be assumed to be missing",$currentSubroutine);
+      displayError("SPLIT function format is:\n)FUNC SPLIT xxx = <base string> <delimiter> [occurrence] [max elements]\nNote: If supplied, the fourth parameter must be numeric - it will be assumed to be missing",$currentSubroutine);
       $fourthParm = '';
     }
     elsif ( (isNumeric($fourthParm)) && ( $thirdParm >= $fourthParm) ) { # make sure that the entry is less than the number of entries
       $fourthParm = $thirdParm + 1;
-      displayError("SPLIT function format is:\n)FUNC SPLIT xxx = <base string> <delimiter> [occurence] [max elements]\nNote: If supplied, the 4th Parm must be bigger than the 3rd Parm - it will be assumed to be $fourthParm",$currentSubroutine);
+      displayError("SPLIT function format is:\n)FUNC SPLIT xxx = <base string> <delimiter> [occurrence] [max elements]\nNote: If supplied, the 4th Parm must be bigger than the 3rd Parm - it will be assumed to be $fourthParm",$currentSubroutine);
     }
 
     displayDebug("strDelim=$strDelim, baseString=$baseString, thirdParm=$thirdParm, fourthParm=$fourthParm",2,$currentSubroutine);
@@ -9426,6 +9468,36 @@ sub processFunction {
     return timeAdj($time1, $mins);   # return the time difference
     
   }  # end of TIMEADJ function
+  elsif ( uc($function) eq "DATEADD" ) { # DateAdd function
+    my $date1 = getToken($card);                         # timestamp 1
+    my $dur = getToken($card);                           # duration
+    
+    # DATEADJ MUST have at least 1 parm
+
+    if ( $date1 eq "" ) { # no parameters have been displayed
+      displayError("DATEADJ function format is:\n)FUNC DATEADJ xxx = <date string> [<duration>]\nNote: It MUST have at least 1 parameter - Function will return current timestamp",$currentSubroutine);
+      return getCurrentTimestamp();
+    }
+    
+    if ( $dur eq '' ) { # second parameter not set - just return the first parameter
+      return $date1;
+    }
+
+    my ($isDuration, $duration) = processDuration($dur, 'T');
+    displayDebug("DATE=$date1, Dur=$dur, TS Dur=$duration",2,$currentSubroutine);
+    if ( ! $isDuration ) { # not a real duration
+      displayError("Duration is invalid: $dur\nDATEADJ function format is:\n)FUNC DATEADJ xxx = <TIMESTAMP string> [<minutes>]\nNote: It MUST have at least 1 parameter - Function will return current timestamp",$currentSubroutine);
+      return $date1;
+    }
+
+    if ( (length($dur) > 1) && (substr($dur,0,1) eq '-') ) { # looks like it is a negative duration
+      return performDateSubtraction($date1, $duration);   # return the date adjustment
+    }
+    else {
+      return performDateAddition($date1, $duration);   # return the date adjustment
+    }
+    
+  }  # end of DATEADD function
   elsif ( uc($function) eq "DISPLAYMIN" ) { # DISPLAYMIN function
     my $mins = getToken($card);                          # number of minutes to be formatted
     
@@ -9551,7 +9623,7 @@ sub adjustUnsetLengthFields {
 
   } # end of loop through ctl lines
 
-}
+} # end of adjustUnsetLengthFields
 
 sub setDefinedVariablesForFile {
   # -----------------------------------------------------------
@@ -9839,7 +9911,7 @@ sub loadFileCTL {
           }
         }
       }
-      else { # length/occurence not defined
+      else { # length/occurrence not defined
         if ( uc($ctlVals[0]) eq "DELIMITED" ) { # if not provided then there is a default value for DELIMITED entries ...
           if ( $currentFieldLoc == -1 ) { # there is no current value set
             $tmpk = 0;    # start at position 0
@@ -10079,7 +10151,7 @@ sub loadInlineFileCTL {
         }
       }
     }
-    else { # length/occurence not defined
+    else { # length/occurrence not defined
       if ( uc($ctlVals[0]) eq "DELIMITED" ) { # if not provided then there is a default value for DELIMITED entries ...
         if ( $currentFieldLoc == -1 ) { # there is no current value set
           $tmpk = 0;    # start at position 0
@@ -10426,3 +10498,4 @@ sub processSkeleton {
 } # end of processSkeleton
 
 1;
+
