@@ -2,7 +2,7 @@
 # --------------------------------------------------------------------
 # calculator.pm
 #
-# $Id: calculator.pm,v 1.21 2019/02/13 05:00:07 db2admin Exp db2admin $
+# $Id: calculator.pm,v 1.22 2019/07/16 23:52:27 db2admin Exp db2admin $
 #
 # Description:
 # Package to evaluate a infix calculation string
@@ -17,6 +17,9 @@
 #
 # ChangeLog:
 # $Log: calculator.pm,v $
+# Revision 1.22  2019/07/16 23:52:27  db2admin
+# move debug messages to STDERR
+#
 # Revision 1.21  2019/02/13 05:00:07  db2admin
 # 1. Timestamp subtraction now allows duration, time and timestamp subtraction
 # 2. Added in extra tests in the calcTestRoutine to test new functionality
@@ -392,7 +395,7 @@ sub calcVersion {
   # --------------------------------------------------------------------"
 
   my $currentRoutine = 'calcVersion';
-  my $ID = '$Id: calculator.pm,v 1.21 2019/02/13 05:00:07 db2admin Exp db2admin $';
+  my $ID = '$Id: calculator.pm,v 1.22 2019/07/16 23:52:27 db2admin Exp db2admin $';
 
   my @V = split(/ /,$ID);
   my $nameStr=$V[1];
@@ -477,22 +480,22 @@ sub displayDebug {
     my $TS = getCurrentTimestamp();
 
     if ( $lit eq "") { # Nothing to display so just display the date and time
-      print "$sub - $TS\n";
+      print STDERR "$sub - $TS\n";
     }
     elsif ( $lit eq "DUMPSTACK" ) {
-      print "Dumping STACK ($#stack entries) \n";
-      for ( my $i = 0; $i <= $#stack; $i++ ) { print "$sub - $TS : Stack $i : $stack[$i] [tot $#stack]\n"; }
+      print STDERR "Dumping STACK ($#stack entries) \n";
+      for ( my $i = 0; $i <= $#stack; $i++ ) { print STDERR "$sub - $TS : Stack $i : $stack[$i] [tot $#stack]\n"; }
     }
     elsif ( $lit eq "DUMPOUTPUT" ) {
-      print "Dumping OUTPUT STACK ( $#output entries) \n";
-      for ( my $i = 0; $i <= $#output; $i++ ) { print "$sub - $TS : Output Stack $i : $output[$i] [tot $#output]\n"; }
+      print STDERR "Dumping OUTPUT STACK ( $#output entries) \n";
+      for ( my $i = 0; $i <= $#output; $i++ ) { print STDERR "$sub - $TS : Output Stack $i : $output[$i] [tot $#output]\n"; }
     }
     elsif ( $lit eq "DUMPOPSTACK" ) {
-      print "Dumping OPERAND STACK ( $#operandStack entries) \n";
-      for ( my $i = 0; $i <= $#operandStack; $i++ ) { print "$sub - $TS : Operand Stack $i : $operandStack[$i] [tot $#operandStack]\n"; }
+      print STDERR "Dumping OPERAND STACK ( $#operandStack entries) \n";
+      for ( my $i = 0; $i <= $#operandStack; $i++ ) { print STDERR "$sub - $TS : Operand Stack $i : $operandStack[$i] [tot $#operandStack]\n"; }
     }
     else {
-      print "$sub - $TS : $lit\n";
+      print STDERR "$sub - $TS : $lit\n";
     }
   }
 } # end of displayDebug
