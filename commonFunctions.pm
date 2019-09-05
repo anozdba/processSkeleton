@@ -2,7 +2,7 @@
 # --------------------------------------------------------------------
 # commonFunctions.pm
 #
-# $Id: commonFunctions.pm,v 1.59 2019/08/16 03:52:24 db2admin Exp db2admin $
+# $Id: commonFunctions.pm,v 1.60 2019/08/26 03:07:33 db2admin Exp db2admin $
 #
 # Description:
 # Package cotaining common code.
@@ -179,6 +179,10 @@
 #
 # ChangeLog:
 # $Log: commonFunctions.pm,v $
+# Revision 1.60  2019/08/26 03:07:33  db2admin
+# 1. export getDate function for use in other scripts
+# 2. Add in new input parameter type to convertToTimestamp (YYYYMMDDHHMMSS)
+#
 # Revision 1.59  2019/08/16 03:52:24  db2admin
 # adjust code for perfrmDateSubtraction to handle short parameters
 #
@@ -396,7 +400,7 @@ use strict;
 # export parameters ....
 require Exporter;
 our @ISA = qw(Exporter);
-our @EXPORT_OK = qw(trim ltrim rtrim commonVersion getOpt isValidDate isValidTimestamp isValidTimestampFormat isNumeric myDate $getOpt_web $getOpt_optName $getOpt_min_match $getOpt_optValue getOpt_form @myDate_ReturnDesc $cF_debugLevel $getOpt_calledBy $parmSeparators processDirectory $maxDepth $fileCnt $dirCnt localDateTime displayMinutes timeDiff timeAdj convertToTimestamp getCurrentTimestamp testCommonFunctions $cF_debugModules processDuration performDateAddition performDateSubtraction performTimestampAddition performTimestampSubtraction performTimeAddition performTimeSubtraction isValidTime convertTimestampDuration ingestData tablespaceStateLit displayDebug displayError $getOpt_parmsAsParms $dontGenKeyEntry);
+our @EXPORT_OK = qw(trim ltrim rtrim commonVersion getOpt isValidDate isValidTimestamp isValidTimestampFormat isNumeric myDate $getOpt_web $getOpt_optName $getOpt_min_match $getOpt_optValue getOpt_form @myDate_ReturnDesc $cF_debugLevel $getOpt_calledBy $parmSeparators processDirectory $maxDepth $fileCnt $dirCnt localDateTime displayMinutes timeDiff timeAdj convertToTimestamp getDate getCurrentTimestamp testCommonFunctions $cF_debugModules processDuration performDateAddition performDateSubtraction performTimestampAddition performTimestampSubtraction performTimeAddition performTimeSubtraction isValidTime convertTimestampDuration ingestData tablespaceStateLit displayDebug displayError $getOpt_parmsAsParms $dontGenKeyEntry);
 
 # persistent variables
 
@@ -745,7 +749,7 @@ sub timeDiff {
 
 sub commonVersion {
 
-  my $ID = '$Id: commonFunctions.pm,v 1.59 2019/08/16 03:52:24 db2admin Exp db2admin $';
+  my $ID = '$Id: commonFunctions.pm,v 1.60 2019/08/26 03:07:33 db2admin Exp db2admin $';
   my @V = split(/ /,$ID);
   my $nameStr=$V[1];
   (my $name,my $x) = split(",",$nameStr);
@@ -3088,6 +3092,7 @@ sub convertToTimestamp {
 
   # Supported input formats:
   #      1. Sep 17, 2017 6:00:07 PM
+  #      2. YYYYMMDDHHMMSS
   #
   # The output format will always be:
   #         2017.09.17 18:00:07
@@ -3095,25 +3100,42 @@ sub convertToTimestamp {
   my $inDate = shift;
 
   my ( $sec, $min, $hour, $day, $mon, $year);
+  
+  my @part;
 
   # check for quotes ..... (and remove them)
 
   if ( $inDate =~ /^".*"$/ ) {
     ($inDate) = ($inDate =~ /^"(.*)"$/);
   }
-
-  my @part = split(" ", $inDate);
-
-  if ( ! defined($part[4]) ) { # 4 parts not found - ignore call
-    return '';
+  
+  # check if it is just a 14 digit numeric string .....
+  if ( $inDate =~ /\d\d\d\d\d\d\d\d\d\d\d\d\d\d/ ) { # 14 digit numeric string
+    # reformat the string into a processable format
+    $mon = substr($inDate,4,2);
+    if ( ($mon > 0) && ( $mon < 13) ) { # make sure the month number is valid
+      $inDate = "xxx " . substr($inDate,6,2) . ", " . substr($inDate,0,4) . " " . substr($inDate,8,2) . ":" . substr($inDate,10,2) . ":" . substr($inDate,12,2);
+      @part = split(" ", $inDate);
+    }
+    else {
+      return '';
+    }
   }
+  else { # it's format should be 'Sep 17, 2017 6:00:07 PM'
 
-  # process month
-  if ( ! defined($monthNumber{$part[0]}) ) { # month not entered as the first parameter - return with no result
-    return '';
-  }
-  else {
-    $mon = $monthNumber{$part[0]};
+    @part = split(" ", $inDate);
+
+    if ( ! defined($part[4]) ) { # 4 parts not found - ignore call
+      return '';
+    }
+
+    # process month
+    if ( ! defined($monthNumber{$part[0]}) ) { # month not entered as the first parameter - return with no result
+      return '';
+    }
+    else {
+      $mon = $monthNumber{$part[0]};
+    }
   }
   
   my @tmp;
