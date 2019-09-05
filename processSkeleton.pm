@@ -2,7 +2,7 @@
 # --------------------------------------------------------------------
 # processSkeleton.pm
 #
-# $Id: processSkeleton.pm,v 1.148 2019/08/16 04:13:40 db2admin Exp db2admin $
+# $Id: processSkeleton.pm,v 1.149 2019/08/26 03:11:56 db2admin Exp db2admin $
 #
 # Description:
 # Script to process a skeleton
@@ -31,6 +31,9 @@
 # ChangeLog:
 #
 # $Log: processSkeleton.pm,v $
+# Revision 1.149  2019/08/26 03:11:56  db2admin
+# add in new variable currentDOTRow that will always be the ROW number of the current cursor
+#
 # Revision 1.148  2019/08/16 04:13:40  db2admin
 # 1. upgrade testRoutineto allow the use of alternate skeletons
 # 2. add in code for DATEDIFF function
@@ -941,7 +944,7 @@ sub skelVersion {
   # -----------------------------------------------------------
 
   my $currentSubroutine = 'skelVersion'; 
-  my $ID = '$Id: processSkeleton.pm,v 1.148 2019/08/16 04:13:40 db2admin Exp db2admin $';
+  my $ID = '$Id: processSkeleton.pm,v 1.149 2019/08/26 03:11:56 db2admin Exp db2admin $';
   my @V = split(/ /,$ID);
   my $nameStr=$V[1];
   my @N = split(",",$nameStr);
@@ -2485,6 +2488,15 @@ sub substituteVariables {
           }
           elsif ( uc($varName) eq 'TESTROUTINES' ) { 
             $skelFieldValue = $testRoutines; 
+            $skelFieldFound = "Yes";
+          }
+          elsif ( uc($varName) eq 'CURRENTDOTROW' ) { 
+            if ( defined ($cursorRowNumber{$currentCursorConnection}) ) { # set the value
+              $skelFieldValue = $cursorRowNumber{$currentCursorConnection}; 
+            }
+            else { # flag it as not valid
+              $skelFieldValue = -1;
+            }
             $skelFieldFound = "Yes";
           }
           elsif ( uc($varName) eq 'INDEXCASEINSENSITIVE' ) { 
@@ -9213,7 +9225,7 @@ sub processSKELVERS {
   # -----------------------------------------------------------
   # Routine to process the SKELVERS statemnent. The format of the statement is:
   #
-  # )SKELVERS  $Id: processSkeleton.pm,v 1.148 2019/08/16 04:13:40 db2admin Exp db2admin $
+  # )SKELVERS  $Id: processSkeleton.pm,v 1.149 2019/08/26 03:11:56 db2admin Exp db2admin $
   #
   # Usage: processVERSION(<control card>)
   # Returns: sets the internal variable skelVers
@@ -11364,3 +11376,4 @@ sub processSkeleton {
 } # end of processSkeleton
 
 1;
+
