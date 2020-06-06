@@ -1,8 +1,7 @@
-#!/usr/bin/perl
 # --------------------------------------------------------------------
 # processSkeleton.pm
 #
-# $Id: processSkeleton.pm,v 1.149 2019/08/26 03:11:56 db2admin Exp db2admin $
+# $Id: processSkeleton.pm,v 1.151 2020/06/06 13:57:49 root Exp root $
 #
 # Description:
 # Script to process a skeleton
@@ -31,6 +30,15 @@
 # ChangeLog:
 #
 # $Log: processSkeleton.pm,v $
+# Revision 1.151  2020/06/06 13:57:49  root
+# add in a default value to the SBOX command
+# add in new base variable HTTP_HOST
+#
+# Revision 1.150  2019/12/22 22:26:50  db2admin
+# 1. add in a blank line to the end of DMPHDR output to ensure that the data is identified as text
+# 2. Add )TRUNCMICROSECONDS amd )LEAVEMICROSECONDS commands to set and unset a flag to indicate if timestamp fields should have their microseconds values removed
+# 3. Modify )END_OF_INLINE processing to ensure that it obeys the )SEL )DOT exclusions
+#
 # Revision 1.149  2019/08/26 03:11:56  db2admin
 # add in new variable currentDOTRow that will always be the ROW number of the current cursor
 #
@@ -692,6 +700,7 @@ my @traceLevelStack = ();                 # stack to manage trace levels
 my $SQLError = 1;                         # flag indicating that the open cursor returned no rows (worked but couldn't find anything)
 my %weekDays = ( "MON", "Monday", "TUE", "Tuesday", "WED", "Wednesday", "THU", "Thursday", "FRI", "Friday", "SAT", "Saturday", "SUN", "Sunday");
 my $truncateTrailingZeroes = 0;           # flag indicating if trailing zeroes should be removed from returned database values
+my $truncateMicroseconds = 0;             # flag indicating if microseconds should be truncated from timestamps
 my $cursorDecimalPlaces = -1;             # Number of decimal places to retain after truncating zeroes
 my $currentVariable = '';                 # this holds the name of the variable to be assigned the return value from a )FUNC statement 
 my $leftJustTab = '!';                    # character to be used as left justified tab stop
@@ -944,7 +953,7 @@ sub skelVersion {
   # -----------------------------------------------------------
 
   my $currentSubroutine = 'skelVersion'; 
-  my $ID = '$Id: processSkeleton.pm,v 1.149 2019/08/26 03:11:56 db2admin Exp db2admin $';
+  my $ID = '$Id: processSkeleton.pm,v 1.151 2020/06/06 13:57:49 root Exp root $';
   my @V = split(/ /,$ID);
   my $nameStr=$V[1];
   my @N = split(",",$nameStr);
@@ -3994,6 +4003,7 @@ sub processDMPHDR {
     if ( $skelDOTSkipCards eq "No" ) {                         # Not within a )DOT being skipped
       outputLine("Content-Disposition: Attachment; filename=$file");
       outputLine("Content-type: text/text");
+      outputLine("");   # a blank line is required to delimit the start of the input
     }
   }
 
@@ -4538,6 +4548,13 @@ sub getTabValue {
             }
           }
         }
+        elsif ( ( $fieldType == 93 ) ) { # timestamp field
+          if ( $truncateMicroseconds && ( length($fieldValue) == 26 ) && (substr($fieldValue,19,1) eq '.') ) { #  field should be 26 bytes long and have a period in the 20th byte to be truncated
+            $fieldValue = substr($fieldValue,0,19);         # trim microseconds from the field
+            displayDebug("Column has a value of $formattedValue [timestamp - microseconds truncated]\n",2,$currentSubroutine);
+          }
+        }
+
         if ( $skelDebugLevel > 0 ) { 
           $formattedValue = "($fieldType) $fieldValue";
         }
@@ -5384,7 +5401,7 @@ sub processSBOX {
   # -----------------------------------------------------------
   # Routine to print out a selection box derived form a database query
   #
-  # The SBOX control statement looks like )SBOX <DB Ref> [(<ID>,<Form Name>, <Button Name>, <Form Components to Generate>, <Form Target>[,form method])] <SQL Statement>
+  # The SBOX control statement looks like )SBOX <DB Ref> [(<ID>,<Form Name>, <Button Name>, <Form Components to Generate>, <Form Target>[,form method],default value)] <SQL Statement>
   #
   # The HTML generated will look like (for a value of SE in <form components to generate>):
   # <form name="{form name}" action="{form target}" method="{form method - defaults to GET}"> 
@@ -5420,6 +5437,7 @@ sub processSBOX {
   my $form_target = 'test.cgi';                                # target to use if button is selected
   my $form_method = 'GET';                                     # method to use on the form 
   my $form_components = '';                                    # form components to generate
+  my $form_default = '';
   
   if ( $skelSelSkipCards eq "No" ) {                           # not skipping cards because of a failed )SEL
     if ( $skelDOTSkipCards eq "No" ) {                         # Not within a )DOT being skipped
@@ -5437,6 +5455,7 @@ sub processSBOX {
           if ( defined($tmpParm[3]) ) { $form_components = $tmpParm[3];}    # form: S - put in <form>, E - put in </form>
           if ( defined($tmpParm[4]) ) { $form_target = $tmpParm[4]; }       # script the button will call
           if ( defined($tmpParm[5]) ) { $form_method = $tmpParm[5]; }       # method to use on form
+          if ( defined($tmpParm[6]) ) { $form_default = $tmpParm[6]; }      # default value to be selected
         }
         displayDebug("Extracted ID is: $ID, button name is: $buttonName, form is: $formName, SQL is: $SQL",1,$currentSubroutine);
       }
@@ -5490,7 +5509,13 @@ sub processSBOX {
                 else {
                   $SBOX_Option = ${$skelCursorRow{'SBOX'}}[0];
                 }
-                outputLine("<option value=\"$SBOX_Value\">$SBOX_Option</opton>");
+                my $defStr = '';
+                if  ( $SBOX_Option ne '' ) { # a default has been set
+                  if ( $SBOX_Option eq $form_default ) { # this is the entry that should be the default
+                    $defStr = ' selected="selected"';
+                  }
+                }
+                outputLine("<option value=\"$SBOX_Value\" $defStr>$SBOX_Option</opton>");
             
                 # move on to the next row now .....
             
@@ -9100,6 +9125,40 @@ sub processDECIMALPLACES {
 
 } # end of processDECIMALPLACES 
 
+sub processTRUNCMICROSECONDS {
+  # -----------------------------------------------------------
+  # Routine to set the truncateMicroseconds flag
+  #
+  # Usage: )TRUNCMICROSECONDS 
+  # Returns: nothing, but sets the truncateMicroseconds flag
+  # -----------------------------------------------------------
+
+  my $currentSubroutine = 'processTRUNCMICROSECONDS';
+  my $card = shift;                                                         # establish the card being processed
+
+  $truncateMicroseconds = 1;
+
+  displayDebug("truncateMicroseconds flag set",2,$currentSubroutine);
+
+} # end of processTRUNCMICROSECONDS
+
+sub processLEAVEMICROSECONDS {
+  # -----------------------------------------------------------
+  # Routine to unset the truncateMicroseconds flag
+  #
+  # Usage: )TRUNCMICROSECONDS
+  # Returns: nothing, but sets the truncateMicroseconds flag
+  # -----------------------------------------------------------
+
+  my $currentSubroutine = 'processLEAVEMICROSECONDS';
+  my $card = shift;                                                         # establish the card being processed
+
+  $truncateMicroseconds = 0;
+
+  displayDebug("truncateMicroseconds flag unset",2,$currentSubroutine);
+
+} # end of processLEAVEMICROSECONDS
+
 sub processTRUNCZEROES {
   # -----------------------------------------------------------
   # Routine to set the truncatetrailingzeroes flag
@@ -9225,7 +9284,7 @@ sub processSKELVERS {
   # -----------------------------------------------------------
   # Routine to process the SKELVERS statemnent. The format of the statement is:
   #
-  # )SKELVERS  $Id: processSkeleton.pm,v 1.149 2019/08/26 03:11:56 db2admin Exp db2admin $
+  # )SKELVERS  $Id: processSkeleton.pm,v 1.151 2020/06/06 13:57:49 root Exp root $
   #
   # Usage: processVERSION(<control card>)
   # Returns: sets the internal variable skelVers
@@ -9579,8 +9638,12 @@ sub processControlCard {
     processENDDOF($card);
   }
   elsif ( $skelCardType eq ")END_OF_INLINE" ) {   # END_OF_INLINE Control Card - ignore this card - it should only every get here it is missing a preceding INLINE command
-    displayError(")END_OF_INLINE card found without preceding INLINE. Card will be ignored.", $currentSubroutine);
-    return;
+    if ( $skelSelSkipCards eq "No" ) {                           # not skipping cards because of a failed )SEL
+      if ( $skelDOTSkipCards eq "No" ) {                         # Not within a )DOT being skipped
+        displayError(")END_OF_INLINE card found without preceding INLINE. Card will be ignored.", $currentSubroutine);
+        return;
+      }
+    }
   }
   elsif ( $skelCardType eq ")ENDDOEXEC" ) {   # ENDDOF Control Card - terminate a DOF control loop
     processENDDOEXEC($card);
@@ -9608,6 +9671,12 @@ sub processControlCard {
   }
   elsif ( $skelCardType eq ")LEAVEZEROES" ) {    # LEAVEZEROES Control Card - reset the truncateTrailingZeroes flag
       processLEAVEZEROES($card);
+  }
+  elsif ( $skelCardType eq ")TRUNCMICROSECONDS" ) {    # TRUNCMICROSECONDS Control Card - set the truncateMicroseconds flag
+      processTRUNCMICROSECONDS($card);
+  }
+  elsif ( $skelCardType eq ")LEAVEMICROSECONDS" ) {    # LEAVEMICROSECONDS Control Card - reset the truncateMicroseconds flag
+      processLEAVEMICROSECONDS($card);
   }
   elsif ( $skelCardType eq ")TRACEOFF" ) { # TRACEOFF Control Card - Resume trace level that existed when last TRACE command set
     processTRACEOFF($card);  
@@ -11193,7 +11262,9 @@ sub setBaseVariables {
   $a = skelVersion();
   setVariable('prSkelVers', $a);
   setVariable('lastError','');
-
+  
+  my $HTTP_HOST = $ENV{'HTTP_HOST'};
+  setVariable("HTTP_HOST", $HTTP_HOST); 
 
 } # end of setBaseVariables 
 
