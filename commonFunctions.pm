@@ -2,7 +2,7 @@
 # --------------------------------------------------------------------
 # commonFunctions.pm
 #
-# $Id: commonFunctions.pm,v 1.60 2019/08/26 03:07:33 db2admin Exp db2admin $
+# $Id: commonFunctions.pm,v 1.61 2020/06/06 13:53:55 root Exp root $
 #
 # Description:
 # Package cotaining common code.
@@ -179,6 +179,9 @@
 #
 # ChangeLog:
 # $Log: commonFunctions.pm,v $
+# Revision 1.61  2020/06/06 13:53:55  root
+# add code to also remove &'s from the returned QUERY _STRING
+#
 # Revision 1.60  2019/08/26 03:07:33  db2admin
 # 1. export getDate function for use in other scripts
 # 2. Add in new input parameter type to convertToTimestamp (YYYYMMDDHHMMSS)
@@ -749,7 +752,7 @@ sub timeDiff {
 
 sub commonVersion {
 
-  my $ID = '$Id: commonFunctions.pm,v 1.60 2019/08/26 03:07:33 db2admin Exp db2admin $';
+  my $ID = '$Id: commonFunctions.pm,v 1.61 2020/06/06 13:53:55 root Exp root $';
   my @V = split(/ /,$ID);
   my $nameStr=$V[1];
   (my $name,my $x) = split(",",$nameStr);
@@ -1130,7 +1133,7 @@ sub getOpt {
   }
 
   my $QUERY_STRING = $ENV{'QUERY_STRING'};
-
+  
   if ( ($#_ < 0) && ($QUERY_STRING eq '') ) {
     print STDERR "[$getOpt_calledBy] No parameters passed\n";
     return 0;
@@ -1200,6 +1203,7 @@ sub getOpt {
       my @QPARGV = (); # Query parm ARGV cleared
       # get rid of any 'web' spacing characters (i.e. replace + with ' ')
       $QUERY_STRING =~ s/\+/ /g;
+      $QUERY_STRING =~ s/\&/ /g;
       @QPARGV = split (" ", $QUERY_STRING);
 
       for ($i=0 ; $i <= $#QPARGV ; $i++ ) {        # loop through the arguments
