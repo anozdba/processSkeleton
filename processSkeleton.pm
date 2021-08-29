@@ -1,7 +1,7 @@
 # --------------------------------------------------------------------
 # processSkeleton.pm
 #
-# $Id: processSkeleton.pm,v 1.151 2020/06/06 13:57:49 root Exp root $
+# $Id: processSkeleton.pm,v 1.154 2021/08/29 13:08:47 root Exp kevin $
 #
 # Description:
 # Script to process a skeleton
@@ -30,6 +30,15 @@
 # ChangeLog:
 #
 # $Log: processSkeleton.pm,v $
+# Revision 1.154  2021/08/29 13:08:47  root
+# add in new internal variable SERVER_NAME to describe the environment variable SERVER_NAME
+#
+# Revision 1.153  2021/02/22 11:30:12  root
+# add in new statement )ASEL which is the same as )SEL except that if the first parameter is a string it will have all quotes matching the leading quote escaped out
+#
+# Revision 1.152  2020/10/16 01:09:40  root
+# initialise $HTTP_HOST
+#
 # Revision 1.151  2020/06/06 13:57:49  root
 # add in a default value to the SBOX command
 # add in new base variable HTTP_HOST
@@ -708,6 +717,7 @@ my $rightJustTab = '~';                   # character to be used as right justif
 my $statementError = '';                  # variable to hold the last error message
 my @scopeStack = ('global');              # establish the variable domain stack (this is used when searching for variables)
 my $currentScope = 'global';              # set the initial domain
+my $stringChar = ' ';                     # holds the string character if a string token is being processed
 
 # Database connection detail arrays ....
 
@@ -953,7 +963,7 @@ sub skelVersion {
   # -----------------------------------------------------------
 
   my $currentSubroutine = 'skelVersion'; 
-  my $ID = '$Id: processSkeleton.pm,v 1.151 2020/06/06 13:57:49 root Exp root $';
+  my $ID = '$Id: processSkeleton.pm,v 1.154 2021/08/29 13:08:47 root Exp kevin $';
   my @V = split(/ /,$ID);
   my $nameStr=$V[1];
   my @N = split(",",$nameStr);
@@ -1817,6 +1827,7 @@ sub getToken {
   my $currentSubroutine = 'getToken'; 
   my $tLine = shift;
   my $tTok = "";
+  $stringChar = ' ';
 
   displayDebug("Line: $tLine Start Pos: $currentLinePosition",2,$currentSubroutine);
   # Skip whitespace
@@ -1831,6 +1842,7 @@ sub getToken {
   # Set token value
   if ( (substr($tLine,$currentLinePosition,1) eq "\'" ) || (substr($tLine,$currentLinePosition,1) eq "\"" ) ) { # it starts with a quote
     my $termQuote = substr($tLine,$currentLinePosition,1);
+    $stringChar = $termQuote;
     displayDebug("Token is a string. Terminating character has been set as >$termQuote<",2,$currentSubroutine);
     $currentLinePosition++;
     while ( ($currentLinePosition <= length($tLine) ) && (substr($tLine,$currentLinePosition,1) ne $termQuote) ) {
@@ -9284,7 +9296,7 @@ sub processSKELVERS {
   # -----------------------------------------------------------
   # Routine to process the SKELVERS statemnent. The format of the statement is:
   #
-  # )SKELVERS  $Id: processSkeleton.pm,v 1.151 2020/06/06 13:57:49 root Exp root $
+  # )SKELVERS  $Id: processSkeleton.pm,v 1.154 2021/08/29 13:08:47 root Exp kevin $
   #
   # Usage: processVERSION(<control card>)
   # Returns: sets the internal variable skelVers
@@ -9540,6 +9552,23 @@ sub processControlCard {
     $selectCond = trim(substr($card . " ",11));
     return;
   }
+  
+  $currentLinePosition = 0;
+  $skelCardType = uc(getToken($card));
+  if ( $skelCardType eq ')ASEL' ) {
+    # escape out string characters if it is an )ASEL statement
+    my $nextToken = getToken($card);
+    if ( $stringChar eq "'" ) { 
+      $nextToken = substituteVariables($nextToken);
+      $nextToken =~ s/\'/\'\'/g;
+      $card = ')ASEL \'' . $nextToken . '\'' . substr($card,$currentLinePosition);      
+    }    
+    elsif ( $stringChar eq '"' ) { 
+      $nextToken = substituteVariables($nextToken);
+      $nextToken =~ s/\"/\"\"/g;
+      $card = ')ASEL \"' . $nextToken . '\"' . substr($card,$currentLinePosition);      
+    }    
+  }
      
   displayDebug("Control Card Processing Started - $card",2,$currentSubroutine);
   $card = substituteVariables($card); 
@@ -9691,6 +9720,9 @@ sub processControlCard {
     processWHEN($card);
   }
   elsif ( ($skelCardType eq ")SEL") || ($skelCardType eq ")IF") ) {          # SEL Control Card - Optionally process a group of cards (similar to an IF statement)
+    processSEL($card);
+  }
+  elsif ( ($skelCardType eq ")ASEL") || ($skelCardType eq ")AIF") ) {        # ASEL Control Card - Optionally process a group of cards (similar to an IF statement)
     processSEL($card);
   }
   elsif ( ($skelCardType eq ")SELELSE") || ($skelCardType eq ")ELSEIF") ) {  # SELELSE Control Card - Optionally process a group of cards (similar to an ELSEIF statement)
@@ -11264,7 +11296,11 @@ sub setBaseVariables {
   setVariable('lastError','');
   
   my $HTTP_HOST = $ENV{'HTTP_HOST'};
+  if ( !defined($HTTP_HOST) ) { $HTTP_HOST = '' }
   setVariable("HTTP_HOST", $HTTP_HOST); 
+  my $SERVER_NAME = $ENV{'SERVER_NAME'};
+  if ( !defined($SERVER_NAME) ) { $SERVER_NAME = '' }
+  setVariable("SERVER_NAME", $SERVER_NAME); 
 
 } # end of setBaseVariables 
 
