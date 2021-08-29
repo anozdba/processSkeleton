@@ -2,7 +2,7 @@
 # --------------------------------------------------------------------
 # runSkeleton.cgi
 #
-# $Id: runSkeleton.cgi,v 1.13 2019/07/16 23:18:35 db2admin Exp db2admin $
+# $Id: runSkeleton.cgi,v 1.15 2021/08/29 13:03:56 db2admin Exp kevin $
 #
 # Description:
 # Script to process the skeleton passed as the first parameter
@@ -14,6 +14,12 @@
 #
 # ChangeLog:
 # $Log: runSkeleton.cgi,v $
+# Revision 1.15  2021/08/29 13:03:56  db2admin
+# allow for parameters entering via $QUERY_STRING
+#
+# Revision 1.14  2019/09/29 22:43:47  db2admin
+# initialise flag values
+#
 # Revision 1.13  2019/07/16 23:18:35  db2admin
 # display SQL when diag level reaches 0
 #
@@ -121,7 +127,7 @@ if ( $QUERY_STRING ne '' ) { $outputMode = 'HTTP' ; } # if the $QUERY_STRING var
 
 # Usage subroutine
 
-my $ID = '$Id: runSkeleton.cgi,v 1.13 2019/07/16 23:18:35 db2admin Exp db2admin $';
+my $ID = '$Id: runSkeleton.cgi,v 1.15 2021/08/29 13:03:56 db2admin Exp kevin $';
 my @V = split(/ /,$ID);
 my $Version=$V[2];
 my $Changed="$V[3] $V[4]";
@@ -132,7 +138,7 @@ sub usage {
 
   if ( $#_ > -1 ) {
     if ( trim("$_[0]") ne "" ) {
-      print "\n$_[0]\n\n";
+      print STDERR "\n$_[0]\n\n";
     }
   }
 
@@ -312,6 +318,7 @@ sub setSkelOptions {
           $parmString .= "$prm";
           $skelParms{$prm} = $var;
           $skelParmsValid{$prm} = $valid;
+          $skelParmsValue{$prm} = 0; # init flag
           $parameterIsFlag{$prm} = 1;
           if ( $debugLevel > 0 ) { print STDERR "From File ($file): Flag $prm read in and assigned to $var\n"; }
         }
@@ -364,15 +371,23 @@ sub setSkelOptions {
 
 # before it goes too far check to see what is in the skeleton (and check that a valid skeleton has been passed)
 
-if ( $#ARGV == -1 ) { # MUST have at least 1 parameter
-  usage("this script requires at least 1 parameter that points to an existing skeleton file");
+if ( ($#ARGV == -1) && ( $QUERY_STRING eq '') ) { # MUST have at least 1 parameter
+  usage("this script requires at least 1 parameter that points to an existing skeleton file($QUERY_STRING)");
   exit;
 }
 
 my $confFile;
 
 # save the skeleton name
-$skeleton = $ARGV[0];
+if ( $QUERY_STRING != '' ) {
+  $QUERY_STRING =~ s/\+/ /g;
+  $QUERY_STRING =~ s/\&/ /g;
+  my @bits = split(" ",$QUERY_STRING);
+  $skeleton = $bits[0];
+}
+else {  
+  $skeleton = $ARGV[0];
+}
 $debugLevel = 0;
 $readDefaults = 1;
 $readSkeleton = 1;
@@ -452,7 +467,7 @@ $getOpt_optValue = "";
 while ( getOpt($parmString) ) {
  $parmCount++;
  if (($getOpt_optName eq "h") || ($getOpt_optName eq "?") )  {
-   usage ("");
+   usage ("xxxxxxxxxxxxxxx");
    exit;
  }
  elsif ( $getOpt_optName eq "s" )  {
@@ -584,5 +599,6 @@ generateDates();
 if ( $debugLevel > 0 ) { print STDERR "calling: processSkeleton($skeleton, \"$skelParameters\")\n"; }
 my $a = processSkeleton($skeleton, "$skelParameters");
 print "$a\n";
+
 
 
