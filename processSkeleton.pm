@@ -1,7 +1,7 @@
 # --------------------------------------------------------------------
 # processSkeleton.pm
 #
-# $Id: processSkeleton.pm,v 1.154 2021/08/29 13:08:47 root Exp kevin $
+# $Id: processSkeleton.pm,v 1.155 2025/09/14 03:06:27 kevin Exp kevin $
 #
 # Description:
 # Script to process a skeleton
@@ -30,6 +30,9 @@
 # ChangeLog:
 #
 # $Log: processSkeleton.pm,v $
+# Revision 1.155  2025/09/14 03:06:27  kevin
+# Correct bug with the implementation of )IF and )ELSEIF
+#
 # Revision 1.154  2021/08/29 13:08:47  root
 # add in new internal variable SERVER_NAME to describe the environment variable SERVER_NAME
 #
@@ -963,7 +966,7 @@ sub skelVersion {
   # -----------------------------------------------------------
 
   my $currentSubroutine = 'skelVersion'; 
-  my $ID = '$Id: processSkeleton.pm,v 1.154 2021/08/29 13:08:47 root Exp kevin $';
+  my $ID = '$Id: processSkeleton.pm,v 1.155 2025/09/14 03:06:27 kevin Exp kevin $';
   my @V = split(/ /,$ID);
   my $nameStr=$V[1];
   my @N = split(",",$nameStr);
@@ -7932,7 +7935,7 @@ sub processSEL {
     displayDebug("PUSHING onto stack - #entries $cnt",2,$currentSubroutine);
     displayDebug("Pushing control counts: \$skelDOEXECCount=$skelDOEXECCount,\$skelDOFCount=$skelDOFCount,\$skelDOTCount=$skelDOTCount,\$skelSELCount=$skelSELCount,\$skelGotoENDSEL=$skelGotoENDSEL,\$skelSEL_resumeLevel=$skelSEL_resumeLevel",1,$currentSubroutine);
     $skelSELCount++;                                                      # keep track ofthe )SEL level we are at
-    my $tmpI = trim(substr($card,5));                                     # tmpI now holds the condition
+    my $tmpI = trim($card);                                               # tmpI now holds the condition
     displayDebug("Passing the following condition (SEL) : $tmpI",2,$currentSubroutine);
  
     if ( processCondition($tmpI) ) { # returns 1 if condition is true
@@ -7976,7 +7979,7 @@ sub processSELELSE {
   if ( ( $skelGotoENDSEL eq "No" ) ) {                         # no successful SEL/SELELSE yet so need to keep checking
     if ( ( $skelDOTSkipCards eq "No" ) ) {                     # not skipping cards because we are within a )DOT
       if ( ( $skelSelSkipCards eq "Yes" ) ) {                  # skipping SEL cards because previouse check failed so keep checking
-        if ( trim($card) eq ")SELELSE" ) {                     # the card has no conditions so is a catch all
+        if ( trim($card) eq "" ) {                             # the card has no conditions so is a catch all
           if ( $skelSELCount == $skelSEL_resumeLevel + 1 ) {   # check to see if we are back in play doing checks
             $skelSelSkipCards = "No";                          # process the cards in this )SELELSE group
             $skelGotoENDSEL = "Yes";                           # after processing goto the )ENDSEL
@@ -7984,7 +7987,7 @@ sub processSELELSE {
         }
         else { # the SELELSE has a condition parameter
           if ( $skelSELCount == $skelSEL_resumeLevel + 1 ) {   # check to see if we are back in play doing checks
-            $tmpI = trim(substr($card,9));
+            $tmpI = trim($card);
             displayDebug("Passing the following condition (SELELSE) : $tmpI",2,$currentSubroutine);
           
             if ( processCondition($tmpI) ) { # returns 1 if condition is true
@@ -9296,7 +9299,7 @@ sub processSKELVERS {
   # -----------------------------------------------------------
   # Routine to process the SKELVERS statemnent. The format of the statement is:
   #
-  # )SKELVERS  $Id: processSkeleton.pm,v 1.154 2021/08/29 13:08:47 root Exp kevin $
+  # )SKELVERS  $Id: processSkeleton.pm,v 1.155 2025/09/14 03:06:27 kevin Exp kevin $
   #
   # Usage: processVERSION(<control card>)
   # Returns: sets the internal variable skelVers
@@ -9720,13 +9723,13 @@ sub processControlCard {
     processWHEN($card);
   }
   elsif ( ($skelCardType eq ")SEL") || ($skelCardType eq ")IF") ) {          # SEL Control Card - Optionally process a group of cards (similar to an IF statement)
-    processSEL($card);
+    processSEL(trim(substr($card,length($skelCardType))));
   }
   elsif ( ($skelCardType eq ")ASEL") || ($skelCardType eq ")AIF") ) {        # ASEL Control Card - Optionally process a group of cards (similar to an IF statement)
-    processSEL($card);
+    processSEL(trim(substr($card,length($skelCardType))));
   }
   elsif ( ($skelCardType eq ")SELELSE") || ($skelCardType eq ")ELSEIF") ) {  # SELELSE Control Card - Optionally process a group of cards (similar to an ELSEIF statement)
-    processSELELSE($card);
+    processSELELSE(trim(substr($card,length($skelCardType))));
   }
   elsif ( ($skelCardType eq ")ENDSEL") || ($skelCardType eq ")ENDIF") ) {    # ENDSEL Control Card - Terminate a )SEL Command
     processENDSEL($card);
